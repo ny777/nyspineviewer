@@ -63,6 +63,10 @@
     {
       "name": "danger",
       "value": "#EF4444"
+    },
+    {
+      "name": "divider",
+      "value": "#1FFFFFFF"
     }
   ]
 }

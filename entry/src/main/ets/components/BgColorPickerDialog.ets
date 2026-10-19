@@ -12,7 +12,13 @@ const BG_COLOR_PALETTE: Array<string> = [
 export struct BgColorPickerDialog {
   controller?: CustomDialogController;
   pickedColor: string = '#0F172A';
+  /** 是否已设置自定义背景图（决定是否显示「移除背景图」）。 */
+  hasBgImage: boolean = false;
   confirm: (color: string) => void = (color: string) => {
+  };
+  pickImage: () => void = () => {
+  };
+  removeImage: () => void = () => {
   };
   @State selectedColor: string = '#0F172A';
 
@@ -51,6 +57,31 @@ export struct BgColorPickerDialog {
         }, (color: string) => color)
       }
       .width('100%')
+
+      // 背景图操作区：颜色与图片共存（图覆盖色，移除回色），与安卓一致
+      Divider()
+        .color($r('app.color.divider'))
+        .width('100%')
+
+      Button($r('app.string.btn_select_bg_image'))
+        .width('100%')
+        .backgroundColor($r('app.color.chip_bg'))
+        .fontColor($r('app.color.text_primary'))
+        .onClick(() => {
+          this.controller?.close();
+          this.pickImage();
+        })
+
+      if (this.hasBgImage) {
+        Button($r('app.string.btn_remove_bg_image'))
+          .width('100%')
+          .backgroundColor($r('app.color.chip_bg'))
+          .fontColor($r('app.color.danger'))
+          .onClick(() => {
+            this.controller?.close();
+            this.removeImage();
+          })
+      }
 
       Row({ space: 12 }) {
         Button($r('app.string.dialog_cancel'))

@@ -4,6 +4,7 @@
  */
 import { webview } from '@kit.ArkWeb';
 import { picker } from '@kit.CoreFileKit';
+import { fileIo } from '@kit.CoreFileKit';
 import { Context } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
@@ -60,6 +61,7 @@ struct Index {
   private webReady: boolean = false;
   private pendingScripts: Array<string> = [];
   private modelsRoot: string = '';
+  private bgRoot: string = '';
   private prefs: PrefsManager | null = null;
   private library: SpineModelLibrary | null = null;
   private colorDialogController: CustomDialogController | null = null;
@@ -77,6 +79,8 @@ struct Index {
   private pausedByHide: boolean = false;
   @State fps: number = 60;
   @State bgColor: string = '#0F172A';
+  /** 背景图文件名（<filesDir>/bg/ 内，空串表示未设置）。 */
+  @State bgImageName: string = '';
   @State capturing: boolean = false;
   @State mainModelId: string = '';
   @State subModelId: string = '';
@@ -85,6 +89,7 @@ struct Index {
   async aboutToAppear(): Promise<void> {
     const context: Context = getContext(this);
     this.modelsRoot = `${context.filesDir}/models`;
+    this.bgRoot = `${context.filesDir}/bg`;
 
     this.bridge.modelLoadedHandler = (json: string): void => {
       this.handleModelLoaded(json);
@@ -116,6 +121,7 @@ struct Index {
     this.playing = true;
     this.fps = clampInt(prefs.getNumber(PrefsKeys.TARGET_FPS, 60), 15, 120);
     this.bgColor = intColorToHex(prefs.getNumber(PrefsKeys.BG_COLOR, PrefsManager.defaultBgColor));
+    this.bgImageName = prefs.getString(PrefsKeys.BG_IMAGE_PATH, '');
     this.initSlotUi(0);
     this.initSlotUi(1);
   }
@@ -153,6 +159,7 @@ struct Index {
         controller: this.webviewController,
         bridge: this.bridge,
         modelsRoot: this.modelsRoot,
+        bgRoot: this.bgRoot,
         onPageReady: (): void => {
           this.handleWebReady();
         }
@@ -270,6 +277,9 @@ struct Index {
     this.sendCommand({ cmd: BridgeCmdNames.SET_GESTURE_SLOT, slot: this.selectedSlot });
     this.sendCommand({ cmd: BridgeCmdNames.SET_FPS, fps: this.fps });
     this.sendCommand({ cmd: BridgeCmdNames.SET_BG_COLOR, color: this.bgColor });
+    if (this.bgImageName.length > 0) {
+      this.sendCommand({ cmd: BridgeCmdNames.SET_BG_IMAGE, url: `/bg/${this.bgImageName}` });
+    }
     this.sendCommand({ cmd: BridgeCmdNames.SET_PLAYING, playing: this.playing });
     this.loadSlotModel(0);
     this.loadSlotModel(1);
@@ -757,13 +767,106 @@ struct Index {
     this.colorDialogController = new CustomDialogController({
       builder: BgColorPickerDialog({
         pickedColor: this.bgColor,
+        hasBgImage: this.bgImageName.length > 0,
         confirm: (color: string): void => {
           this.applyBgColor(color);
+        },
+        pickImage: (): void => {
+          this.pickBackgroundImage();
+        },
+        removeImage: (): void => {
+          this.removeBackgroundImage();
         }
       }),
       autoCancel: true
     });
     this.colorDialogController.open();
+  }
+
+  /** 选取自定义背景图：PhotoViewPicker → 拷贝到 <filesDir>/bg/ → 持久化 + 下发。 */
+  private async pickBackgroundImage(): Promise<void> {
+    const photoPicker = new picker.PhotoViewPicker();
+    const options = new picker.PhotoSelectOptions();
+    options.MIMEType = picker.PhotoViewMIMETypes.IMAGE_TYPE;
+    options.maxSelectNumber = 1;
+    let uris: Array<string> = [];
+    try {
+      const result: picker.PhotoSelectResult = await photoPicker.select(options);
+      uris = result.photoUris;
+    } catch (err) {
+      this.resumeAfterOverlay();
+      return;
+    }
+    this.resumeAfterOverlay();
+    if (uris.length === 0) {
+      return;
+    }
+    const prefs = this.prefs;
+    if (prefs === null) {
+      return;
+    }
+    const uri = uris[0];
+    const lower = uri.toLowerCase();
+    let ext = '.png';
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+      ext = '.jpg';
+    } else if (lower.endsWith('.webp')) {
+      ext = '.webp';
+    } else if (lower.endsWith('.gif')) {
+      ext = '.gif';
+    }
+    const fileName = `custom_bg_${Date.now()}${ext}`;
+    let srcFile: fileIo.File | null = null;
+    try {
+      if (!fileIo.accessSync(this.bgRoot, fileIo.AccessModeType.EXIST)) {
+        fileIo.mkdirSync(this.bgRoot, true);
+      }
+      srcFile = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
+      await fileIo.copyFile(srcFile.fd, `${this.bgRoot}/${fileName}`);
+    } catch (err) {
+      this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_bg_load_fail') });
+      return;
+    } finally {
+      if (srcFile !== null) {
+        try {
+          fileIo.closeSync(srcFile);
+        } catch (err) {
+          // 忽略关闭失败
+        }
+      }
+    }
+    // 替换：清理旧背景图文件，避免残留
+    this.deleteBgFile(this.bgImageName);
+    this.bgImageName = fileName;
+    prefs.putString(PrefsKeys.BG_IMAGE_PATH, fileName);
+    prefs.flush();
+    this.sendCommand({ cmd: BridgeCmdNames.SET_BG_IMAGE, url: `/bg/${fileName}` });
+  }
+
+  /** 移除自定义背景图：删文件 + 清偏好 + 通知 Web 回纯色。 */
+  private removeBackgroundImage(): void {
+    const prefs = this.prefs;
+    this.deleteBgFile(this.bgImageName);
+    this.bgImageName = '';
+    if (prefs !== null) {
+      prefs.putString(PrefsKeys.BG_IMAGE_PATH, '');
+      prefs.flush();
+    }
+    this.sendCommand({ cmd: BridgeCmdNames.SET_BG_IMAGE, url: '' });
+  }
+
+  private deleteBgFile(fileName: string): void {
+    if (fileName.length === 0) {
+      return;
+    }
+    try {
+      const path = `${this.bgRoot}/${fileName}`;
+      if (fileIo.accessSync(path, fileIo.AccessModeType.EXIST)) {
+        fileIo.unlinkSync(path);
+      }
+    } catch (err) {
+      // 清理失败不阻断流程
+    }
   }
 
   private applyBgColor(color: string): void {

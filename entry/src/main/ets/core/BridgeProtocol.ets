@@ -29,6 +29,8 @@ export interface BridgeCommand {
   playing?: boolean;
   fps?: number;
   color?: string;
+  /** 背景图虚拟域相对地址（/bg/<文件名>），空串表示移除。 */
+  url?: string;
 }
 
 /** 命令名常量，避免拼写漂移。 */
@@ -41,6 +43,7 @@ export class BridgeCmdNames {
   static readonly SET_PLAYING: string = 'setPlaying';
   static readonly SET_FPS: string = 'setFps';
   static readonly SET_BG_COLOR: string = 'setBackgroundColor';
+  static readonly SET_BG_IMAGE: string = 'setBackgroundImage';
   static readonly CAPTURE_FRAME: string = 'captureFrame';
   static readonly CLEAR_SLOT: string = 'clearSlot';
   static readonly SET_GESTURE_SLOT: string = 'setGestureSlot';

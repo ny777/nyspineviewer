@@ -62,6 +62,8 @@ export struct SpineWebView {
   bridge: SpineBridgeProxy = new SpineBridgeProxy();
   /** 模型根目录沙箱路径（<filesDir>/models）。 */
   modelsRoot: string = '';
+  /** 背景图目录沙箱路径（<filesDir>/bg）。 */
+  bgRoot: string = '';
   onPageReady: () => void = () => {
   };
 
@@ -105,6 +107,9 @@ export struct SpineWebView {
     }
     if (rel.startsWith('models/')) {
       return this.routeModelFile(rel.substring('models/'.length));
+    }
+    if (rel.startsWith('bg/')) {
+      return this.routeBgFile(rel.substring('bg/'.length));
     }
     return buildNotFoundResponse();
   }
@@ -169,10 +174,49 @@ export struct SpineWebView {
       }
     }
   }
+  /** 沙箱背景图（filesDir/bg/<file>，复用模型路由的路径穿越防护）。 */
+  private routeBgFile(relPath: string): WebResourceResponse {
+    let fileName = '';
+    try {
+      fileName = decodeURIComponent(relPath);
+    } catch (err) {
+      return buildNotFoundResponse();
+    }
+    if (fileName.length === 0 || fileName.includes('/') || fileName.includes('..') ||
+      fileName.startsWith('.') || this.bgRoot.length === 0) {
+      return buildNotFoundResponse();
+    }
+    const filePath = `${this.bgRoot}/${fileName}`;
+    let fd = -1;
+    try {
+      if (!fileIo.accessSync(filePath, fileIo.AccessModeType.EXIST)) {
+        return buildNotFoundResponse();
+      }
+      const stat = fileIo.statSync(filePath);
+      const buffer = new ArrayBuffer(stat.size);
+      fd = fileIo.openSync(filePath, fileIo.OpenMode.READ_ONLY).fd;
+      fileIo.readSync(fd, buffer);
+      const response = new WebResourceResponse();
+      response.setResponseData(buffer);
+      response.setResponseMimeType(mimeFromName(fileName));
+      response.setResponseCode(200);
+      response.setReasonMessage('OK');
+      return response;
+    } catch (err) {
+      return buildNotFoundResponse();
+    } finally {
+      if (fd >= 0) {
+        try {
+          fileIo.closeSync(fd);
+        } catch (err) {
+          // 忽略关闭失败
+        }
+      }
+    }
+  }
 }
 
-/** 404 响应。 */
-function buildNotFoundResponse(): WebResourceResponse {
+/** 404 响应。 */function buildNotFoundResponse(): WebResourceResponse {
   const response = new WebResourceResponse();
   response.setResponseData('Not Found');
   response.setResponseMimeType('text/plain');

@@ -98,7 +98,19 @@
     },
     {
       "name": "color_title",
-      "value": "选择背景颜色"
+      "value": "背景设置"
+    },
+    {
+      "name": "btn_select_bg_image",
+      "value": "选择背景图"
+    },
+    {
+      "name": "btn_remove_bg_image",
+      "value": "移除背景图"
+    },
+    {
+      "name": "toast_bg_load_fail",
+      "value": "设置背景图失败"
     },
     {
       "name": "dialog_ok",

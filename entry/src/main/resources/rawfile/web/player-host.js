@@ -35,6 +35,13 @@
   var fps = 60;
   var lastFrameTime = 0;
   var bgColor = [0.059, 0.090, 0.165, 1.0]; // #0F172A
+  // 自定义背景图：图覆盖色，移除回色（对齐 Android SpineGlRenderer bg 分支）
+  var bgImage = null; // HTMLImageElement（解码完成后建纹理）
+  var bgTex = null; // WebGLTexture
+  var bgImageW = 0;
+  var bgImageH = 0;
+  var bgProgram = null; // 背景全屏四边形 program（pos+uv）
+  var bgVbo = null;
   var gestureSlot = 0;
   var diag = { raf: 0, drawn: 0, last: 0, dt: 0 };
 
@@ -435,6 +442,143 @@
     }
   }
 
+  // 自定义背景图：url 空表示移除（删纹理回纯色）；非空经虚拟域 /bg/ 加载
+  function cmdSetBackgroundImage(msg) {
+    var url = typeof msg.url === 'string' ? msg.url : '';
+    deleteBgTexture();
+    bgImage = null;
+    bgImageW = 0;
+    bgImageH = 0;
+    if (!url) {
+      renderFrame(0);
+      return;
+    }
+    var img = new Image();
+    img.onload = function () {
+      bgImage = img;
+      bgImageW = img.naturalWidth || img.width;
+      bgImageH = img.naturalHeight || img.height;
+      if (gl) {
+        createBgTexture();
+      }
+      renderFrame(0);
+    };
+    img.onerror = function () {
+      notifyError(0, 'BG_LOAD_FAILED', '背景图加载失败: ' + url);
+    };
+    img.src = url;
+  }
+
+  function deleteBgTexture() {
+    if (bgTex && gl) {
+      try {
+        gl.deleteTexture(bgTex);
+      } catch (e) {
+        // 忽略释放失败
+      }
+    }
+    bgTex = null;
+  }
+
+  function createBgTexture() {
+    deleteBgTexture();
+    bgTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, bgTex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bgImage);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  }
+
+  function compileShader(type, source) {
+    var shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      console.log('[spine] shader error: ' + gl.getShaderInfoLog(shader));
+      gl.deleteShader(shader);
+      return null;
+    }
+    return shader;
+  }
+
+  // 背景全屏四边形 program（一次编译，pos+uv 交错 VBO 常驻）
+  function ensureBgProgram() {
+    if (bgProgram) {
+      return bgProgram;
+    }
+    var vs = compileShader(gl.VERTEX_SHADER,
+      'attribute vec2 aPos; attribute vec2 aUv; uniform vec2 uPosScale; varying vec2 vUv;' +
+      'void main(){ vUv = aUv; gl_Position = vec4(aPos * uPosScale, 0.0, 1.0); }');
+    var fs = compileShader(gl.FRAGMENT_SHADER,
+      'precision mediump float; varying vec2 vUv; uniform sampler2D uTex;' +
+      'void main(){ gl_FragColor = texture2D(uTex, vUv); }');
+    if (!vs || !fs) {
+      return null;
+    }
+    var program = gl.createProgram();
+    gl.attachShader(program, vs);
+    gl.attachShader(program, fs);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      console.log('[spine] bg program link error: ' + gl.getProgramInfoLog(program));
+      gl.deleteProgram(program);
+      return null;
+    }
+    // TRIANGLE_STRIP 顶点顺序：左下/右下/左上/右上；uv 与顶点配对
+    var quad = new Float32Array([
+      -1, -1, 0, 1,
+      1, -1, 1, 1,
+      -1, 1, 0, 0,
+      1, 1, 1, 0
+    ]);
+    bgVbo = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, bgVbo);
+    gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+    bgProgram = program;
+    return bgProgram;
+  }
+
+  // cover-fit 数学照抄 Android：coverScale = max(vw/imgW, vh/imgH)，居中等比不拉伸
+  function drawBackground(size) {
+    if (!bgTex || !bgImage || bgImageW <= 0 || bgImageH <= 0) {
+      return;
+    }
+    var program = ensureBgProgram();
+    if (!program) {
+      return;
+    }
+    var canvasAspect = size.w / size.h;
+    var imgAspect = bgImageW / bgImageH;
+    var ax = 1;
+    var ay = 1;
+    if (imgAspect > canvasAspect) {
+      ax = imgAspect / canvasAspect;
+    } else {
+      ay = canvasAspect / imgAspect;
+    }
+    gl.useProgram(program);
+    gl.bindBuffer(gl.ARRAY_BUFFER, bgVbo);
+    var posLoc = gl.getAttribLocation(program, 'aPos');
+    var uvLoc = gl.getAttribLocation(program, 'aUv');
+    gl.enableVertexAttribArray(posLoc);
+    gl.enableVertexAttribArray(uvLoc);
+    gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 16, 0);
+    gl.vertexAttribPointer(uvLoc, 2, gl.FLOAT, false, 16, 8);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, bgTex);
+    gl.uniform1i(gl.getUniformLocation(program, 'uTex'), 0);
+    gl.disable(gl.BLEND);
+    // 等比 cover：按纵横比缩放 NDC 半宽/半高，超界部分被视口裁剪
+    gl.uniform2f(gl.getUniformLocation(program, 'uPosScale'), ax, ay);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    gl.disableVertexAttribArray(posLoc);
+    gl.disableVertexAttribArray(uvLoc);
+  }
+
   function cmdSetGestureSlot(msg) {
     gestureSlot = clampSlot(msg.slot);
   }
@@ -527,6 +671,8 @@
     gl.viewport(0, 0, canvas.width, canvas.height);
     gl.clearColor(bgColor[0], bgColor[1], bgColor[2], bgColor[3]);
     gl.clear(gl.COLOR_BUFFER_BIT);
+    // 自定义背景图先画（覆盖纯色，模型后画在其上）
+    drawBackground(size);
     // slot1 先画（后层），slot0 后画（前层），与 Android 版层级一致
     var order = [1, 0];
     var active = null;
@@ -813,6 +959,7 @@
     setPlaying: cmdSetPlaying,
     setFps: cmdSetFps,
     setBackgroundColor: cmdSetBackgroundColor,
+    setBackgroundImage: cmdSetBackgroundImage,
     captureFrame: cmdCaptureFrame,
     clearSlot: cmdClearSlot,
     setGestureSlot: cmdSetGestureSlot
