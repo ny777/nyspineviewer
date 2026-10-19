@@ -257,6 +257,14 @@
       "value": "删除模型"
     },
     {
+      "name": "a11y_hide_controls",
+      "value": "隐藏控制条"
+    },
+    {
+      "name": "a11y_show_controls",
+      "value": "显示控制条"
+    },
+    {
       "name": "confirm_dissolve_group",
       "value": "确定解散分组「%s」？组内模型将保留并移入「未分组」"
     },

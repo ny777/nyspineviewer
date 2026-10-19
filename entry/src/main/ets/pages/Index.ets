@@ -113,6 +113,8 @@ struct Index {
   /** 背景图文件名（<filesDir>/bg/ 内，空串表示未设置）。 */
   @State bgImageName: string = '';
   @State capturing: boolean = false;
+  /** 沉浸模式：控制条收起状态（内存态，每次启动默认显示）。 */
+  @State controlBarVisible: boolean = true;
   /** 主模型加载遮罩（LOAD_MODEL 发出 → onModelLoaded/onError）。 */
   @State modelLoading: boolean = false;
   @State mainModelId: string = '';
@@ -237,39 +239,61 @@ struct Index {
             .backgroundColor('rgba(0,0,0,0.35)')
           }
 
-          // 悬浮控制条（避开底部悬浮页签栏）
-          Column() {
-            ControlBar({
-              slot: this.selectedSlot,
-              playing: this.playing,
-              capturing: this.capturing,
-              animations: this.slotUi[this.selectedSlot].animations,
-              currentAnimation: this.slotUi[this.selectedSlot].currentAnimation,
-              skins: this.slotUi[this.selectedSlot].skins,
-              selectedSkins: this.slotUi[this.selectedSlot].selectedSkins,
-              onSlotChange: (slot: number): void => {
-                this.switchSlot(slot);
-              },
-              onTogglePlay: (): void => {
-                this.togglePlay();
-              },
-              onAnimationPick: (name: string): void => {
-                this.pickAnimation(name);
-              },
-              onSkinToggle: (name: string): void => {
-                this.toggleSkin(name);
-              },
-              onCapture: (): void => {
-                this.startCapture(CAPTURE_PURPOSE_GALLERY);
-              },
-              onResetTransform: (): void => {
-                this.resetTransform();
-              },
-              onClearSlot: (): void => {
-                this.clearSlotModel(this.selectedSlot);
-              }
+          // 悬浮控制条（避开底部悬浮页签栏）+ 沉浸模式把手（收起/展开控制条）
+          Column({ space: 6 }) {
+            if (this.controlBarVisible) {
+              ControlBar({
+                slot: this.selectedSlot,
+                playing: this.playing,
+                capturing: this.capturing,
+                animations: this.slotUi[this.selectedSlot].animations,
+                currentAnimation: this.slotUi[this.selectedSlot].currentAnimation,
+                skins: this.slotUi[this.selectedSlot].skins,
+                selectedSkins: this.slotUi[this.selectedSlot].selectedSkins,
+                onSlotChange: (slot: number): void => {
+                  this.switchSlot(slot);
+                },
+                onTogglePlay: (): void => {
+                  this.togglePlay();
+                },
+                onAnimationPick: (name: string): void => {
+                  this.pickAnimation(name);
+                },
+                onSkinToggle: (name: string): void => {
+                  this.toggleSkin(name);
+                },
+                onCapture: (): void => {
+                  this.startCapture(CAPTURE_PURPOSE_GALLERY);
+                },
+                onResetTransform: (): void => {
+                  this.resetTransform();
+                },
+                onClearSlot: (): void => {
+                  this.clearSlotModel(this.selectedSlot);
+                }
+              })
+              .width('100%')
+              .transition(TransitionEffect.translate({ y: 140 })
+                .combine(TransitionEffect.OPACITY)
+                .animation({ duration: 250, curve: Curve.Friction }))
+            }
+            Button() {
+              SymbolGlyph(this.controlBarVisible ? $r('sys.symbol.chevron_down') : $r('sys.symbol.chevron_up'))
+                .fontSize(12)
+                .fontColor([this.theme().text])
+            }
+            .width(48)
+            .height(18)
+            .borderRadius(9)
+            .backgroundColor(this.theme().chip)
+            .opacity(0.8)
+            .padding(0)
+            .accessibilityText(this.controlBarVisible
+              ? $r('app.string.a11y_hide_controls')
+              : $r('app.string.a11y_show_controls'))
+            .onClick(() => {
+              this.controlBarVisible = !this.controlBarVisible;
             })
-            .width('100%')
           }
           .width('100%')
           .padding({ left: 12, right: 12, bottom: 96 })
