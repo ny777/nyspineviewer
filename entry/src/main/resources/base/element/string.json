@@ -237,6 +237,34 @@
       "value": "设置"
     },
     {
+      "name": "settings_appearance",
+      "value": "外观"
+    },
+    {
+      "name": "settings_playback",
+      "value": "播放"
+    },
+    {
+      "name": "settings_about",
+      "value": "关于"
+    },
+    {
+      "name": "settings_bg_entry",
+      "value": "背景设置"
+    },
+    {
+      "name": "tab_play",
+      "value": "播放"
+    },
+    {
+      "name": "tab_library",
+      "value": "模型库"
+    },
+    {
+      "name": "tab_settings",
+      "value": "设置"
+    },
+    {
       "name": "theme_dark_label",
       "value": "深色主题"
     },

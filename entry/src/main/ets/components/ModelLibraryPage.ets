@@ -1,12 +1,11 @@
 /**
- * 左侧模型库抽屉：导入 ZIP、分组列表（分组头折叠 + 组操作菜单）、模型卡片
- * （版本/格式徽章、分组快捷移动）、设为主/副模型、删除、空库三步引导卡。
+ * 模型库页（HdsTabs 第二页）：导入 ZIP、分组列表（折叠 + 组操作菜单）、
+ * 模型卡片（版本/格式徽章、分组快捷移动）、设为主/副模型、删除、空库三步引导卡。
  */
 import { SpineModelItem } from '../model/SpineModelItem';
 import { getTheme, ThemeColors } from '../core/Theme';
-import { VersionInfoDialog } from './VersionInfoDialog';
 
-/** 抽屉渲染用分组视图（'' = 未分组，置顶）。 */
+/** 页面渲染用分组视图（'' = 未分组，置顶）。 */
 export class ModelGroup {
   name: string;
   models: Array<SpineModelItem>;
@@ -18,7 +17,7 @@ export class ModelGroup {
 }
 
 @Component
-export struct ModelDrawer {
+export struct ModelLibraryPage {
   @Link models: Array<SpineModelItem>;
   @Prop mainModelId: string = '';
   @Prop subModelId: string = '';
@@ -37,17 +36,8 @@ export struct ModelDrawer {
   };
   onDeleteGroup: (group: string) => void = (group: string) => {
   };
-  onClose: () => void = () => {
-  };
-  onToggleTheme: (dark: boolean) => void = (dark: boolean) => {
-  };
   @State collapsedGroups: Array<string> = [];
   @StorageProp('themeDark') themeDark: boolean = true;
-  private versionInfoController: CustomDialogController = new CustomDialogController({
-    builder: VersionInfoDialog({}),
-    autoCancel: true,
-    customStyle: true
-  });
 
   private theme(): ThemeColors {
     return getTheme(this.themeDark);
@@ -97,21 +87,11 @@ export struct ModelDrawer {
 
   build() {
     Column({ space: 12 }) {
-      Row() {
-        Text($r('app.string.drawer_title'))
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(this.theme().text)
-          .layoutWeight(1)
-        Text('✕')
-          .fontSize(18)
-          .fontColor(this.theme().textSecondary)
-          .padding(8)
-          .onClick(() => {
-            this.onClose();
-          })
-      }
-      .width('100%')
+      Text($r('app.string.drawer_title'))
+        .fontSize(20)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(this.theme().text)
+        .width('100%')
 
       Button(this.importing ? $r('app.string.importing') : $r('app.string.import_model'))
         .width('100%')
@@ -145,48 +125,14 @@ export struct ModelDrawer {
         .scrollBar(BarState.Auto)
         .edgeEffect(EdgeEffect.Spring)
       }
-
-      Divider()
-        .color(this.theme().divider)
-        .width('100%')
-
-      Row({ space: 8 }) {
-        Text($r('app.string.theme_dark_label'))
-          .fontSize(13)
-          .fontColor(this.theme().textSecondary)
-          .layoutWeight(1)
-        Toggle({ type: ToggleType.Switch, isOn: this.themeDark })
-          .onChange((isOn: boolean) => {
-            this.onToggleTheme(isOn);
-          })
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-
-      Row({ space: 8 }) {
-        Text($r('app.string.version_info_entry'))
-          .fontSize(13)
-          .fontColor(this.theme().textSecondary)
-          .layoutWeight(1)
-        Text('ℹ')
-          .fontSize(14)
-          .fontColor(this.theme().accentSoft)
-          .width(24)
-          .textAlign(TextAlign.Center)
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-      .onClick(() => {
-        this.versionInfoController.open();
-      })
     }
     .width('100%')
     .height('100%')
-    .padding(16)
-    .backgroundColor(this.theme().drawerBg)
+    .padding({ left: 16, right: 16, top: 16, bottom: 100 })
+    .backgroundColor(this.theme().pageBg)
   }
 
-  /** 空库三步引导卡（功能 9）：标题 + 三步说明 + 大号导入按钮。 */
+  /** 空库三步引导卡：标题 + 三步说明 + 大号导入按钮。 */
   @Builder
   EmptyGuide() {
     Column({ space: 14 }) {

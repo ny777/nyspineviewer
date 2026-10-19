@@ -1,6 +1,6 @@
 /**
- * 底部播放控制条：槽位切换 / 播放暂停 / 截帧 / 重置变换 / 背景色 /
- * 动画菜单 / PMA / 帧率 / 皮肤多选。全部为受控组件，状态与持久化由父页面持有。
+ * 播放页悬浮控制条：槽位切换 / 播放暂停 / 截帧 / 重置变换 / 动画菜单 /
+ * 皮肤多选。PMA、帧率与背景设置在设置页；状态与持久化由父页面持有。
  */
 import { getTheme, ThemeColors } from '../core/Theme';
 
@@ -13,8 +13,6 @@ export struct ControlBar {
   @Prop currentAnimation: string = '';
   @Prop skins: Array<string> = [];
   @Prop selectedSkins: Array<string> = [];
-  @Prop pma: boolean = true;
-  @Prop fps: number = 60;
   @StorageProp('themeDark') themeDark: boolean = true;
 
   onSlotChange: (slot: number) => void = (slot: number) => {
@@ -25,15 +23,9 @@ export struct ControlBar {
   };
   onSkinToggle: (name: string) => void = (name: string) => {
   };
-  onPmaChange: (pma: boolean) => void = (pma: boolean) => {
-  };
-  onFpsChange: (fps: number) => void = (fps: number) => {
-  };
   onCapture: () => void = () => {
   };
   onResetTransform: () => void = () => {
-  };
-  onPickBgColor: () => void = () => {
   };
 
   private theme(): ThemeColors {
@@ -42,7 +34,7 @@ export struct ControlBar {
 
   build() {
     Column({ space: 10 }) {
-      // 行1：槽位 / 播放 / 截帧 / 重置变换 / 背景色
+      // 行1：槽位 / 播放 / 截帧 / 重置变换
       Row({ space: 8 }) {
         Row() {
           Text($r('app.string.slot_main'))
@@ -96,21 +88,11 @@ export struct ControlBar {
           .onClick(() => {
             this.onResetTransform();
           })
-
-        Button($r('app.string.bg_color'))
-          .fontSize(12)
-          .height(30)
-          .padding({ left: 10, right: 10 })
-          .backgroundColor(this.theme().chip)
-          .fontColor(this.theme().text)
-          .onClick(() => {
-            this.onPickBgColor();
-          })
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
 
-      // 行2：动画 / PMA / 帧率
+      // 行2：动画
       Row({ space: 10 }) {
         Text($r('app.string.animation_label'))
           .fontSize(12)
@@ -119,36 +101,12 @@ export struct ControlBar {
           .fontSize(12)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .constraintSize({ maxWidth: 140 })
+          .constraintSize({ maxWidth: 220 })
           .padding({ left: 12, right: 12, top: 7, bottom: 7 })
           .borderRadius(15)
           .backgroundColor(this.theme().chip)
           .fontColor(this.theme().text)
           .bindMenu(this.AnimationMenuBuilder)
-        Row({ space: 6 }) {
-          Text($r('app.string.pma_label'))
-            .fontSize(12)
-            .fontColor(this.theme().textSecondary)
-          Toggle({ type: ToggleType.Switch, isOn: this.pma })
-            .onChange((isOn: boolean) => {
-              this.onPmaChange(isOn);
-            })
-        }
-        .alignItems(VerticalAlign.Center)
-        Row({ space: 6 }) {
-          Text($r('app.string.fps_label'))
-            .fontSize(12)
-            .fontColor(this.theme().textSecondary)
-          Slider({ value: this.fps, min: 15, max: 120, step: 1, style: SliderStyle.OutSet })
-            .layoutWeight(1)
-            .onChange((value: number, mode: SliderChangeMode) => {
-              if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
-                this.onFpsChange(Math.round(value));
-              }
-            })
-        }
-        .alignItems(VerticalAlign.Center)
-        .layoutWeight(1)
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
@@ -183,7 +141,8 @@ export struct ControlBar {
         .alignItems(VerticalAlign.Center)
       }
     }
-    .padding({ left: 16, right: 16, top: 12, bottom: 16 })
+    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+    .borderRadius(20)
     .backgroundColor(this.theme().bottomBarBg)
     .width('100%')
   }

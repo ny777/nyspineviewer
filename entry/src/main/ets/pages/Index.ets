@@ -2,6 +2,7 @@
  * 主页面：Spine 2D 播放器（ArkWeb 渲染 + 模型库 + 播放控制 + 截帧保存）。
  * 状态与持久化全部集中在本页，子组件为受控组件。
  */
+import { HdsTabs, HdsTabsController } from '@kit.UIDesignKit';
 import { webview } from '@kit.ArkWeb';
 import { picker } from '@kit.CoreFileKit';
 import { fileIo } from '@kit.CoreFileKit';
@@ -25,17 +26,23 @@ import { SpineModelLibrary } from '../model/SpineModelLibrary';
 import { SpineModelItem } from '../model/SpineModelItem';
 import { sanitizeAtlas } from '../model/AtlasSanitizer';
 import { SpineWebView, SpineBridgeProxy } from '../components/SpineWebView';
-import { ModelDrawer } from '../components/ModelDrawer';
+import { ModelLibraryPage } from '../components/ModelLibraryPage';
+import { SettingsPage } from '../components/SettingsPage';
 import { ControlBar } from '../components/ControlBar';
 import { BgColorPickerDialog } from '../components/BgColorPickerDialog';
 import { GroupPickerDialog } from '../components/GroupPickerDialog';
 import { GroupDeleteDialog } from '../components/GroupDeleteDialog';
 import { FrameExporter } from '../capture/FrameExporter';
 
-const DRAWER_WIDTH = 320;
 const CAPTURE_TIMEOUT_MS = 15000;
 const LOG_DOMAIN = 0x0031;
 const TAG = 'SpineIndex';
+/** 收藏颜色默认列表（ARGB 十六进制，HdsColorPicker 收藏夹）。 */
+const DEFAULT_BG_FAVORITES: Array<string> = [
+  '#FF0F172A', '#FF1E293B', '#FF312E81', '#FF0C4A6E',
+  '#FF065F46', '#FF10B981', '#FFF59E0B', '#FFEF4444',
+  '#FFFFFFFF', '#FF000000'
+];
 
 /** 单槽位 UI 状态（不可变更新：修改走 clone + 数组重赋值）。 */
 class SlotUiState {
@@ -60,6 +67,8 @@ class SlotUiState {
 @Component
 struct Index {
   private webviewController: webview.WebviewController = new webview.WebviewController();
+  private tabsController: HdsTabsController = new HdsTabsController();
+  private pausedByTabSwitch: boolean = false;
   private bridge: SpineBridgeProxy = new SpineBridgeProxy();
   private webReady: boolean = false;
   private pendingScripts: Array<string> = [];
@@ -77,7 +86,6 @@ struct Index {
   private captureTimerId: number = -1;
 
   @State models: Array<SpineModelItem> = [];
-  @State drawerOpen: boolean = false;
   @State importing: boolean = false;
   @State selectedSlot: number = 0;
   @State playing: boolean = true;
@@ -90,6 +98,7 @@ struct Index {
   @State mainModelId: string = '';
   @State subModelId: string = '';
   @State slotUi: Array<SlotUiState> = [new SlotUiState(), new SlotUiState()];
+  @State bgFavorites: Array<string> = DEFAULT_BG_FAVORITES.slice();
   @StorageProp('themeDark') themeDark: boolean = true;
 
   private theme(): ThemeColors {
@@ -139,6 +148,7 @@ struct Index {
     this.fps = clampInt(prefs.getNumber(PrefsKeys.TARGET_FPS, 60), 15, 120);
     this.bgColor = intColorToHex(prefs.getNumber(PrefsKeys.BG_COLOR, PrefsManager.defaultBgColor));
     this.bgImageName = prefs.getString(PrefsKeys.BG_IMAGE_PATH, '');
+    this.bgFavorites = this.loadBgFavorites(prefs);
     AppStorage.setOrCreate('themeDark', prefs.getString(PrefsKeys.THEME_MODE, 'dark') !== 'light');
     this.initSlotUi(0);
     this.initSlotUi(1);
@@ -172,128 +182,140 @@ struct Index {
   }
 
   build() {
-    Stack({ alignContent: Alignment.Bottom }) {
-      SpineWebView({
-        controller: this.webviewController,
-        bridge: this.bridge,
-        modelsRoot: this.modelsRoot,
-        bgRoot: this.bgRoot,
-        onPageReady: (): void => {
-          this.handleWebReady();
-        }
-      })
-      .width('100%')
-      .height('100%')
-
-      // 左上角模型库入口
-      Button($r('app.string.open_drawer'))
-        .fontSize(13)
-        .fontColor(Color.White)
-        .backgroundColor($r('app.color.btn_dark'))
-        .borderRadius(18)
-        .padding({ left: 14, right: 14, top: 8, bottom: 8 })
-        .position({ x: 16, y: 16 })
-        .onClick(() => {
-          this.drawerOpen = !this.drawerOpen;
-        })
-
-      // 底部控制条
-      ControlBar({
-        slot: this.selectedSlot,
-        playing: this.playing,
-        capturing: this.capturing,
-        animations: this.slotUi[this.selectedSlot].animations,
-        currentAnimation: this.slotUi[this.selectedSlot].currentAnimation,
-        skins: this.slotUi[this.selectedSlot].skins,
-        selectedSkins: this.slotUi[this.selectedSlot].selectedSkins,
-        pma: this.slotUi[this.selectedSlot].pma,
-        fps: this.fps,
-        onSlotChange: (slot: number): void => {
-          this.switchSlot(slot);
-        },
-        onTogglePlay: (): void => {
-          this.togglePlay();
-        },
-        onAnimationPick: (name: string): void => {
-          this.pickAnimation(name);
-        },
-        onSkinToggle: (name: string): void => {
-          this.toggleSkin(name);
-        },
-        onPmaChange: (pma: boolean): void => {
-          this.togglePma(pma);
-        },
-        onFpsChange: (fps: number): void => {
-          this.changeFps(fps);
-        },
-        onCapture: (): void => {
-          this.startCapture();
-        },
-        onResetTransform: (): void => {
-          this.resetTransform();
-        },
-        onPickBgColor: (): void => {
-          this.openColorDialog();
-        }
-      })
-      .width('100%')
-
-      // 抽屉打开时的遮罩（点击关闭）
-      if (this.drawerOpen) {
-        Column()
+    HdsTabs({ controller: this.tabsController }) {
+      TabContent() {
+        Stack({ alignContent: Alignment.Bottom }) {
+          SpineWebView({
+            controller: this.webviewController,
+            bridge: this.bridge,
+            modelsRoot: this.modelsRoot,
+            bgRoot: this.bgRoot,
+            onPageReady: (): void => {
+              this.handleWebReady();
+            }
+          })
           .width('100%')
           .height('100%')
-          .backgroundColor($r('app.color.scrim'))
-          .onClick(() => {
-            this.drawerOpen = false;
-          })
-          .transition(TransitionEffect.OPACITY.animation({ duration: 200 }))
-      }
 
-      // 左侧抽屉（关闭时平移出屏）
-      ModelDrawer({
-        models: this.models,
-        mainModelId: this.mainModelId,
-        subModelId: this.subModelId,
-        importing: this.importing,
-        onImport: (): void => {
-          this.importModels();
-        },
-        onSelectMain: (modelId: string): void => {
-          this.applyModelSelection(0, modelId);
-        },
-        onSelectSub: (modelId: string): void => {
-          this.applyModelSelection(1, modelId);
-        },
-        onDelete: (modelId: string): void => {
-          this.deleteModelAction(modelId);
-        },
-        onMoveToGroup: (modelId: string): void => {
-          this.moveModelToGroup(modelId);
-        },
-        onDissolveGroup: (group: string): void => {
-          this.dissolveGroupAction(group);
-        },
-        onDeleteGroup: (group: string): void => {
-          this.deleteGroupAction(group);
-        },
-        onClose: (): void => {
-          this.drawerOpen = false;
-        },
-        onToggleTheme: (dark: boolean): void => {
-          this.setThemeDark(dark);
+          // 悬浮控制条（避开底部悬浮页签栏）
+          Column() {
+            ControlBar({
+              slot: this.selectedSlot,
+              playing: this.playing,
+              capturing: this.capturing,
+              animations: this.slotUi[this.selectedSlot].animations,
+              currentAnimation: this.slotUi[this.selectedSlot].currentAnimation,
+              skins: this.slotUi[this.selectedSlot].skins,
+              selectedSkins: this.slotUi[this.selectedSlot].selectedSkins,
+              onSlotChange: (slot: number): void => {
+                this.switchSlot(slot);
+              },
+              onTogglePlay: (): void => {
+                this.togglePlay();
+              },
+              onAnimationPick: (name: string): void => {
+                this.pickAnimation(name);
+              },
+              onSkinToggle: (name: string): void => {
+                this.toggleSkin(name);
+              },
+              onCapture: (): void => {
+                this.startCapture();
+              },
+              onResetTransform: (): void => {
+                this.resetTransform();
+              }
+            })
+            .width('100%')
+          }
+          .width('100%')
+          .padding({ left: 12, right: 12, bottom: 96 })
         }
-      })
-      .width(DRAWER_WIDTH)
-      .height('100%')
-      .position({ x: 0, y: 0 })
-      .translate({ x: this.drawerOpen ? 0 : -(DRAWER_WIDTH + 10) })
-      .animation({ duration: 220, curve: Curve.EaseOut })
-      .hitTestBehavior(this.drawerOpen ? HitTestMode.Default : HitTestMode.None)
+        .width('100%')
+        .height('100%')
+      }
+      .tabBar({ icon: $r('app.media.tab_play'), text: $r('app.string.tab_play') })
+
+      TabContent() {
+        ModelLibraryPage({
+          models: this.models,
+          mainModelId: this.mainModelId,
+          subModelId: this.subModelId,
+          importing: this.importing,
+          onImport: (): void => {
+            this.importModels();
+          },
+          onSelectMain: (modelId: string): void => {
+            this.applyModelSelection(0, modelId);
+          },
+          onSelectSub: (modelId: string): void => {
+            this.applyModelSelection(1, modelId);
+          },
+          onDelete: (modelId: string): void => {
+            this.deleteModelAction(modelId);
+          },
+          onMoveToGroup: (modelId: string): void => {
+            this.moveModelToGroup(modelId);
+          },
+          onDissolveGroup: (group: string): void => {
+            this.dissolveGroupAction(group);
+          },
+          onDeleteGroup: (group: string): void => {
+            this.deleteGroupAction(group);
+          }
+        })
+      }
+      .tabBar({ icon: $r('app.media.tab_library'), text: $r('app.string.tab_library') })
+
+      TabContent() {
+        SettingsPage({
+          pma: this.slotUi[this.selectedSlot].pma,
+          fps: this.fps,
+          onPmaChange: (pma: boolean): void => {
+            this.togglePma(pma);
+          },
+          onFpsChange: (fps: number): void => {
+            this.changeFps(fps);
+          },
+          onToggleTheme: (dark: boolean): void => {
+            this.setThemeDark(dark);
+          },
+          onOpenBgSettings: (): void => {
+            this.openColorDialog();
+          }
+        })
+      }
+      .tabBar({ icon: $r('app.media.tab_settings'), text: $r('app.string.tab_settings') })
     }
+    .barOverlap(true)
+    .barPosition(BarPosition.End)
+    .vertical(false)
+    .scrollable(false)
+    .cachedMaxCount(2, TabsCacheMode.CACHE_BOTH_SIDE)
+    .barFloatingStyle()
+    .onChange((index: number) => {
+      this.handleTabChange(index);
+    })
     .width('100%')
     .height('100%')
     .backgroundColor(this.theme().pageBg)
+  }
+
+  /** 切离播放页暂停渲染，切回恢复（同 onPageHide/resumeAfterOverlay 模式）。 */
+  private handleTabChange(index: number): void {
+    if (index === 0) {
+      if (this.pausedByTabSwitch) {
+        this.pausedByTabSwitch = false;
+        this.playing = true;
+        this.sendCommand({ cmd: BridgeCmdNames.SET_PLAYING, playing: true });
+      }
+    } else {
+      if (this.playing) {
+        this.pausedByTabSwitch = true;
+        this.playing = false;
+        this.sendCommand({ cmd: BridgeCmdNames.SET_PLAYING, playing: false });
+      }
+    }
   }
 
   // ==================== Web 就绪与命令发送 ====================
@@ -919,8 +941,12 @@ struct Index {
       builder: BgColorPickerDialog({
         pickedColor: this.bgColor,
         hasBgImage: this.bgImageName.length > 0,
+        initialFavorites: this.bgFavorites.slice(),
         confirm: (color: string): void => {
           this.applyBgColor(color);
+        },
+        favoritesUpdate: (favorites: Array<string>): void => {
+          this.saveBgFavorites(favorites);
         },
         pickImage: (): void => {
           this.pickBackgroundImage();
@@ -932,6 +958,34 @@ struct Index {
       autoCancel: true
     });
     this.colorDialogController.open();
+  }
+
+  private loadBgFavorites(prefs: PrefsManager): Array<string> {
+    const raw = prefs.getString(PrefsKeys.BG_FAVORITES, '');
+    if (raw.length === 0) {
+      return DEFAULT_BG_FAVORITES.slice();
+    }
+    try {
+      const parsed = JSON.parse(raw) as Array<string>;
+      const result = new Array<string>();
+      for (const item of parsed) {
+        if (typeof item === 'string' && item.length > 0) {
+          result.push(item);
+        }
+      }
+      return result.length > 0 ? result : DEFAULT_BG_FAVORITES.slice();
+    } catch (err) {
+      return DEFAULT_BG_FAVORITES.slice();
+    }
+  }
+
+  private saveBgFavorites(favorites: Array<string>): void {
+    this.bgFavorites = favorites.slice();
+    const prefs = this.prefs;
+    if (prefs !== null) {
+      prefs.putString(PrefsKeys.BG_FAVORITES, JSON.stringify(favorites));
+      prefs.flush();
+    }
   }
 
   /** 选取自定义背景图：PhotoViewPicker → 拷贝到 <filesDir>/bg/ → 持久化 + 下发。 */
@@ -1021,11 +1075,12 @@ struct Index {
   }
 
   private applyBgColor(color: string): void {
-    this.bgColor = color;
-    this.sendCommand({ cmd: BridgeCmdNames.SET_BG_COLOR, color: color });
+    const rgbHex = normalizeRgbHex(color);
+    this.bgColor = rgbHex;
+    this.sendCommand({ cmd: BridgeCmdNames.SET_BG_COLOR, color: rgbHex });
     const prefs = this.prefs;
     if (prefs !== null) {
-      prefs.putNumber(PrefsKeys.BG_COLOR, hexToIntColor(color));
+      prefs.putNumber(PrefsKeys.BG_COLOR, hexToIntColor(rgbHex));
       prefs.flush();
     }
   }
@@ -1073,14 +1128,32 @@ function toHex2(value: number): string {
 /** '#RRGGBB' → 0xAARRGGBB 整型色值（非法回退默认背景色）。 */
 function hexToIntColor(hex: string): number {
   const clean = hex.startsWith('#') ? hex.substring(1) : hex;
-  if (clean.length !== 6) {
+  const rgbText = clean.length === 8 ? clean.substring(2) : clean;
+  if (rgbText.length !== 6) {
     return PrefsManager.defaultBgColor;
   }
-  const rgb = parseInt(clean, 16);
+  const rgb = parseInt(rgbText, 16);
   if (Number.isNaN(rgb)) {
     return PrefsManager.defaultBgColor;
   }
   return 0xFF000000 | rgb;
+}
+
+/** 归一化为 '#RRGGBB'（兼容 8 位 ARGB 输入，如 HdsColorPicker 回调值）。 */
+function normalizeRgbHex(hex: string): string {
+  const clean = hex.startsWith('#') ? hex.substring(1) : hex;
+  const rgbText = clean.length === 8 ? clean.substring(2) : clean;
+  if (rgbText.length !== 6) {
+    return '#0F172A';
+  }
+  const rgb = parseInt(rgbText, 16);
+  if (Number.isNaN(rgb)) {
+    return '#0F172A';
+  }
+  const r = (rgb >> 16) & 0xFF;
+  const g = (rgb >> 8) & 0xFF;
+  const b = rgb & 0xFF;
+  return `#${toHex2(r)}${toHex2(g)}${toHex2(b)}`;
 }
 
 /** 数值夹取并取整。 */

@@ -27,6 +27,7 @@ export class PrefsKeys {
 
   static readonly LAST_IMPORT_GROUP: string = 'last_import_group';
   static readonly THEME_MODE: string = 'theme_mode';
+  static readonly BG_FAVORITES: string = 'bg_favorites';
   static readonly TARGET_FPS: string = 'target_fps';
   static readonly TAP_SWITCH_ANIMATION: string = 'tap_switch_animation';
 }

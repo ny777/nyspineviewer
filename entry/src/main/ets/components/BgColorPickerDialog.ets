@@ -1,13 +1,9 @@
 /**
- * 背景色选择弹窗（@CustomDialog）：预设色板 + 确定/取消。
+ * 背景设置弹窗（@CustomDialog）：HdsColorPicker（GRID/SPECTRUM/SLIDERS + 收藏夹）
+ * + 背景图选/删。选色即时生效（onColorSelected → confirm）。
  */
+import { HdsColorPicker, HdsColorPickerTabType } from '@kit.UIDesignKit';
 import { getTheme, ThemeColors } from '../core/Theme';
-
-const BG_COLOR_PALETTE: Array<string> = [
-  '#0F172A', '#0B1120', '#000000', '#1E293B',
-  '#312E81', '#4C1D95', '#0C4A6E', '#065F46',
-  '#7F1D1D', '#9D174D', '#FFFFFF', '#E2E8F0'
-];
 
 @CustomDialog
 export struct BgColorPickerDialog {
@@ -15,21 +11,20 @@ export struct BgColorPickerDialog {
   pickedColor: string = '#0F172A';
   /** 是否已设置自定义背景图（决定是否显示「移除背景图」）。 */
   hasBgImage: boolean = false;
+  /** 收藏颜色初始列表（ARGB 十六进制）。 */
+  initialFavorites: Array<string> = [];
   confirm: (color: string) => void = (color: string) => {
+  };
+  favoritesUpdate: (favorites: Array<string>) => void = (favorites: Array<string>) => {
   };
   pickImage: () => void = () => {
   };
   removeImage: () => void = () => {
   };
-  @State selectedColor: string = '#0F172A';
   @StorageProp('themeDark') themeDark: boolean = true;
 
   private theme(): ThemeColors {
     return getTheme(this.themeDark);
-  }
-
-  aboutToAppear(): void {
-    this.selectedColor = this.pickedColor;
   }
 
   build() {
@@ -40,31 +35,23 @@ export struct BgColorPickerDialog {
         .fontColor(this.theme().text)
         .width('100%')
 
-      Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Center }) {
-        ForEach(BG_COLOR_PALETTE, (color: string) => {
-          Stack() {
-            Column()
-              .width(36)
-              .height(36)
-              .borderRadius(18)
-              .backgroundColor(color)
-            if (this.selectedColor === color) {
-              Column()
-                .width(40)
-                .height(40)
-                .borderRadius(20)
-                .border({ width: 2, color: this.theme().accent })
-            }
-          }
-          .margin(6)
-          .onClick(() => {
-            this.selectedColor = color;
-          })
-        }, (color: string) => color)
-      }
+      HdsColorPicker({
+        initialColor: this.pickedColor,
+        initialFavoriteColors: this.initialFavorites,
+        options: {
+          circleRadius: 12,
+          tabs: [HdsColorPickerTabType.GRID, HdsColorPickerTabType.SPECTRUM, HdsColorPickerTabType.SLIDERS]
+        },
+        onColorSelected: (color: string): void => {
+          this.confirm(color);
+        },
+        onFavoriteColorsUpdate: (favorites: Array<string>): void => {
+          this.favoritesUpdate(favorites);
+        }
+      })
       .width('100%')
+      .height(380)
 
-      // 背景图操作区：颜色与图片共存（图覆盖色，移除回色），与安卓一致
       Divider()
         .color(this.theme().divider)
         .width('100%')
@@ -89,28 +76,16 @@ export struct BgColorPickerDialog {
           })
       }
 
-      Row({ space: 12 }) {
-        Button($r('app.string.dialog_cancel'))
-          .layoutWeight(1)
-          .backgroundColor(this.theme().chip)
-          .fontColor(this.theme().textSecondary)
-          .onClick(() => {
-            this.controller?.close();
-          })
-        Button($r('app.string.dialog_ok'))
-          .layoutWeight(1)
-          .backgroundColor(this.theme().accent)
-          .fontColor(Color.White)
-          .onClick(() => {
-            const color = this.selectedColor;
-            this.controller?.close();
-            this.confirm(color);
-          })
-      }
-      .width('100%')
+      Button($r('app.string.btn_close'))
+        .width('100%')
+        .backgroundColor(this.theme().accent)
+        .fontColor(Color.White)
+        .onClick(() => {
+          this.controller?.close();
+        })
     }
     .padding(20)
-    .width('90%')
+    .width('92%')
     .backgroundColor(this.theme().dialogBg)
     .borderRadius(16)
   }
