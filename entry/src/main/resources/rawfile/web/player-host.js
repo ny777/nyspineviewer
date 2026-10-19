@@ -10,8 +10,8 @@
  *
  * 消息协议：与 ArkTS BridgeProtocol.ets 严格一致。
  *   ArkTS→Web: window.SpineHost.cmd({cmd: 'loadModel', ...})
- *   Web→ArkTS: window.spineBridge.onModelLoaded(json) / onError / onCaptureFrame /
- *              onTransformChanged / onAnimationChanged
+ *   Web→ArkTS: window.spineBridge.onModelLoaded(json) / onError / onCaptureFrameChunk /
+ *              onCaptureFrame / onTransformChanged / onAnimationChanged
  */
 (function () {
   'use strict';
@@ -25,6 +25,7 @@
   var MAX_SCALE = 5.0;
   var MIN_FPS = 15;
   var MAX_FPS = 120;
+  var CAPTURE_CHUNK_SIZE = 262144; // 256KB base64 切片
 
   var canvas = document.getElementById('spine-canvas');
   var gl = null;
@@ -400,6 +401,8 @@
     renderFrame(0);
   }
 
+  // 分块传输：base64 按 256KB 切片经 onCaptureFrameChunk 回传，
+  // 全部发完后用 onCaptureFrame 发完成信号（规避单次桥回调体积上限）。
   function cmdCaptureFrame() {
     try {
       renderFrame(0); // 与 toDataURL 同一同步块内，避免 WebGL 缓冲被合成清空
@@ -409,7 +412,15 @@
         notifyError(0, 'CAPTURE_ERROR', 'toDataURL 返回空数据');
         return;
       }
-      bridgeCall('onCaptureFrame', JSON.stringify({ base64Png: base64 }));
+      var total = Math.ceil(base64.length / CAPTURE_CHUNK_SIZE);
+      for (var i = 0; i < total; i++) {
+        bridgeCall('onCaptureFrameChunk', JSON.stringify({
+          index: i,
+          total: total,
+          data: base64.substring(i * CAPTURE_CHUNK_SIZE, Math.min((i + 1) * CAPTURE_CHUNK_SIZE, base64.length))
+        }));
+      }
+      bridgeCall('onCaptureFrame', JSON.stringify({ done: true }));
     } catch (e) {
       notifyError(0, 'CAPTURE_ERROR', (e && e.message) || e);
     }

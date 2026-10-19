@@ -57,9 +57,16 @@ export interface BridgeErrorEvent {
   message: string;
 }
 
-/** Web→ArkTS：截帧回传。 */
+/** Web→ArkTS：截帧分块回传（256KB base64 切片）。 */
+export interface CaptureChunkEvent {
+  index: number;
+  total: number;
+  data: string;
+}
+
+/** Web→ArkTS：截帧分块传输完成信号。 */
 export interface CaptureFrameEvent {
-  base64Png: string;
+  done: boolean;
 }
 
 /** Web→ArkTS：手势结束后的变换回传（持久化用）。 */
@@ -91,8 +98,14 @@ interface BridgeErrorRaw {
   message?: Object;
 }
 
+interface CaptureChunkRaw {
+  index?: Object;
+  total?: Object;
+  data?: Object;
+}
+
 interface CaptureFrameRaw {
-  base64Png?: Object;
+  done?: Object;
 }
 
 interface TransformChangedRaw {
@@ -157,7 +170,31 @@ export function parseBridgeErrorEvent(json: string): BridgeErrorEvent | null {
   return { slot: slot, code: code, message: message };
 }
 
-/** 解析 onCaptureFrame 回传 JSON。 */
+/** 解析 onCaptureFrameChunk 回传 JSON（截帧分块）。 */
+export function parseCaptureChunkEvent(json: string): CaptureChunkEvent | null {
+  let parsed: object | null = null;
+  try {
+    parsed = JSON.parse(json);
+  } catch (err) {
+    return null;
+  }
+  if (parsed === null) {
+    return null;
+  }
+  const raw = parsed as CaptureChunkRaw;
+  if (typeof raw.index !== 'number' || typeof raw.total !== 'number' ||
+    typeof raw.data !== 'string' || !Number.isInteger(raw.index) ||
+    !Number.isInteger(raw.total) || raw.index < 0 || raw.total < 1 ||
+    raw.index >= raw.total || raw.data.length === 0) {
+    return null;
+  }
+  const index: number = raw.index;
+  const total: number = raw.total;
+  const data: string = raw.data;
+  return { index: index, total: total, data: data };
+}
+
+/** 解析 onCaptureFrame 回传 JSON（分块传输完成信号）。 */
 export function parseCaptureFrameEvent(json: string): CaptureFrameEvent | null {
   let parsed: object | null = null;
   try {
@@ -169,11 +206,11 @@ export function parseCaptureFrameEvent(json: string): CaptureFrameEvent | null {
     return null;
   }
   const raw = parsed as CaptureFrameRaw;
-  if (typeof raw.base64Png !== 'string') {
+  if (typeof raw.done !== 'boolean') {
     return null;
   }
-  const base64Png: string = raw.base64Png;
-  return { base64Png: base64Png };
+  const done: boolean = raw.done;
+  return { done: done };
 }
 
 /** 解析 onTransformChanged 回传 JSON。 */

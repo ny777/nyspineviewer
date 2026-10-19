@@ -2,15 +2,155 @@
   "string": [
     {
       "name": "module_desc",
-      "value": "module description"
+      "value": "Spine 2D 播放器主模块"
     },
     {
       "name": "EntryAbility_desc",
-      "value": "description"
+      "value": "Spine 2D 骨骼动画播放器"
     },
     {
       "name": "EntryAbility_label",
-      "value": "label"
+      "value": "Spine 播放器"
+    },
+    {
+      "name": "open_drawer",
+      "value": "模型库"
+    },
+    {
+      "name": "drawer_title",
+      "value": "模型库"
+    },
+    {
+      "name": "import_model",
+      "value": "导入模型 (ZIP)"
+    },
+    {
+      "name": "importing",
+      "value": "导入中…"
+    },
+    {
+      "name": "empty_library_title",
+      "value": "暂无模型"
+    },
+    {
+      "name": "empty_library_hint",
+      "value": "点击上方“导入模型”按钮导入 Spine ZIP 压缩包"
+    },
+    {
+      "name": "badge_unsupported",
+      "value": "暂不支持"
+    },
+    {
+      "name": "set_main",
+      "value": "设为主模型"
+    },
+    {
+      "name": "set_sub",
+      "value": "设为副模型"
+    },
+    {
+      "name": "slot_main",
+      "value": "主模型"
+    },
+    {
+      "name": "slot_sub",
+      "value": "副模型"
+    },
+    {
+      "name": "play",
+      "value": "播放"
+    },
+    {
+      "name": "pause",
+      "value": "暂停"
+    },
+    {
+      "name": "capture",
+      "value": "截帧保存"
+    },
+    {
+      "name": "reset_transform",
+      "value": "重置变换"
+    },
+    {
+      "name": "bg_color",
+      "value": "背景色"
+    },
+    {
+      "name": "animation_label",
+      "value": "动画"
+    },
+    {
+      "name": "no_animation",
+      "value": "暂无动画"
+    },
+    {
+      "name": "pma_label",
+      "value": "PMA"
+    },
+    {
+      "name": "fps_label",
+      "value": "帧率"
+    },
+    {
+      "name": "skins_label",
+      "value": "皮肤"
+    },
+    {
+      "name": "color_title",
+      "value": "选择背景颜色"
+    },
+    {
+      "name": "dialog_ok",
+      "value": "确定"
+    },
+    {
+      "name": "dialog_cancel",
+      "value": "取消"
+    },
+    {
+      "name": "dialog_delete",
+      "value": "删除"
+    },
+    {
+      "name": "confirm_delete",
+      "value": "确定删除该模型？删除后不可恢复"
+    },
+    {
+      "name": "toast_import_ok",
+      "value": "模型导入成功"
+    },
+    {
+      "name": "toast_import_fail",
+      "value": "导入模型失败"
+    },
+    {
+      "name": "toast_deleted",
+      "value": "已删除"
+    },
+    {
+      "name": "toast_delete_fail",
+      "value": "删除失败"
+    },
+    {
+      "name": "toast_unsupported",
+      "value": "当前仅集成 Spine 4.1 运行时，暂不支持该版本模型"
+    },
+    {
+      "name": "toast_capture_ok",
+      "value": "截帧已保存"
+    },
+    {
+      "name": "toast_capture_fail",
+      "value": "截帧失败"
+    },
+    {
+      "name": "toast_capture_cancel",
+      "value": "已取消保存"
+    },
+    {
+      "name": "toast_transform_reset",
+      "value": "已重置位置与缩放"
     }
   ]
 }

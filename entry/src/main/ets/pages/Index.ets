@@ -1,38 +1,767 @@
-/*
- * Copyright (c) 2026 Huawei Device Co., Ltd.
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+/**
+ * 主页面：Spine 2D 播放器（ArkWeb 渲染 + 模型库 + 播放控制 + 截帧保存）。
+ * 状态与持久化全部集中在本页，子组件为受控组件。
  */
+import { webview } from '@kit.ArkWeb';
+import { picker } from '@kit.CoreFileKit';
+import { Context } from '@kit.AbilityKit';
+import { BusinessError } from '@kit.BasicServicesKit';
+import { PrefsManager, PrefsKeys, SlotPrefs } from '../core/PrefsManager';
+import {
+  BridgeCmdNames,
+  BridgeCommand,
+  buildRunScript,
+  parseModelLoadedEvent,
+  parseBridgeErrorEvent,
+  parseCaptureChunkEvent,
+  parseCaptureFrameEvent,
+  parseTransformChangedEvent,
+  parseAnimationChangedEvent
+} from '../core/BridgeProtocol';
+import { SpineModelLibrary } from '../model/SpineModelLibrary';
+import { SpineModelItem } from '../model/SpineModelItem';
+import { SpineWebView, SpineBridgeProxy } from '../components/SpineWebView';
+import { ModelDrawer } from '../components/ModelDrawer';
+import { ControlBar } from '../components/ControlBar';
+import { BgColorPickerDialog } from '../components/BgColorPickerDialog';
+import { FrameExporter } from '../capture/FrameExporter';
+
+const DRAWER_WIDTH = 320;
+const CAPTURE_TIMEOUT_MS = 15000;
+
+/** 单槽位 UI 状态（不可变更新：修改走 clone + 数组重赋值）。 */
+class SlotUiState {
+  animations: Array<string> = [];
+  skins: Array<string> = [];
+  currentAnimation: string = '';
+  selectedSkins: Array<string> = [];
+  pma: boolean = true;
+
+  clone(): SlotUiState {
+    const copy = new SlotUiState();
+    copy.animations = this.animations.slice();
+    copy.skins = this.skins.slice();
+    copy.currentAnimation = this.currentAnimation;
+    copy.selectedSkins = this.selectedSkins.slice();
+    copy.pma = this.pma;
+    return copy;
+  }
+}
 
 @Entry
 @Component
 struct Index {
-  @State message: string = 'Hello World';
+  private webviewController: webview.WebviewController = new webview.WebviewController();
+  private bridge: SpineBridgeProxy = new SpineBridgeProxy();
+  private webReady: boolean = false;
+  private pendingScripts: Array<string> = [];
+  private modelsRoot: string = '';
+  private prefs: PrefsManager | null = null;
+  private library: SpineModelLibrary | null = null;
+  private colorDialogController: CustomDialogController | null = null;
+
+  // 截帧分块缓存
+  private captureChunks: Array<string> = [];
+  private captureTotal: number = 0;
+  private captureTimerId: number = -1;
+
+  @State models: Array<SpineModelItem> = [];
+  @State drawerOpen: boolean = false;
+  @State importing: boolean = false;
+  @State selectedSlot: number = 0;
+  @State playing: boolean = true;
+  @State fps: number = 60;
+  @State bgColor: string = '#0F172A';
+  @State capturing: boolean = false;
+  @State mainModelId: string = '';
+  @State subModelId: string = '';
+  @State slotUi: Array<SlotUiState> = [new SlotUiState(), new SlotUiState()];
+
+  async aboutToAppear(): Promise<void> {
+    const context: Context = getContext(this);
+    this.modelsRoot = `${context.filesDir}/models`;
+
+    this.bridge.modelLoadedHandler = (json: string): void => {
+      this.handleModelLoaded(json);
+    };
+    this.bridge.errorHandler = (json: string): void => {
+      this.handleBridgeError(json);
+    };
+    this.bridge.captureChunkHandler = (json: string): void => {
+      this.handleCaptureChunk(json);
+    };
+    this.bridge.captureDoneHandler = (json: string): void => {
+      this.handleCaptureDone(json);
+    };
+    this.bridge.transformChangedHandler = (json: string): void => {
+      this.handleTransformChanged(json);
+    };
+    this.bridge.animationChangedHandler = (json: string): void => {
+      this.handleAnimationChanged(json);
+    };
+
+    this.prefs = await PrefsManager.getInstance(context);
+    this.library = SpineModelLibrary.getInstance(context);
+    this.models = await this.library.loadModels();
+
+    const prefs = this.prefs;
+    this.mainModelId = prefs.getString(PrefsKeys.ACTIVE_MODEL_ID, '');
+    this.subModelId = prefs.getString(PrefsKeys.MODEL2_ID, '');
+    this.selectedSlot = prefs.getNumber(PrefsKeys.SELECTED_SLOT, 0) === 1 ? 1 : 0;
+    this.playing = true;
+    this.fps = clampInt(prefs.getNumber(PrefsKeys.TARGET_FPS, 60), 15, 120);
+    this.bgColor = intColorToHex(prefs.getNumber(PrefsKeys.BG_COLOR, PrefsManager.defaultBgColor));
+    this.initSlotUi(0);
+    this.initSlotUi(1);
+  }
+
+  aboutToDisappear(): void {
+    this.clearCaptureTimer();
+  }
+
+  onPageHide(): void {
+    if (this.playing) {
+      this.playing = false;
+      this.sendCommand({ cmd: BridgeCmdNames.SET_PLAYING, playing: false });
+    }
+  }
 
   build() {
-    RelativeContainer() {
-      Text(this.message)
-        .id('HelloWorld')
-        .fontSize($r('app.float.page_text_font_size'))
-        .fontWeight(FontWeight.Bold)
-        .alignRules({
-          center: { anchor: '__container__', align: VerticalAlign.Center },
-          middle: { anchor: '__container__', align: HorizontalAlign.Center }
-        })
+    Stack({ alignContent: Alignment.Bottom }) {
+      SpineWebView({
+        controller: this.webviewController,
+        bridge: this.bridge,
+        modelsRoot: this.modelsRoot,
+        onPageReady: (): void => {
+          this.handleWebReady();
+        }
+      })
+      .width('100%')
+      .height('100%')
+
+      // 左上角模型库入口
+      Button($r('app.string.open_drawer'))
+        .fontSize(13)
+        .fontColor(Color.White)
+        .backgroundColor($r('app.color.btn_dark'))
+        .borderRadius(18)
+        .padding({ left: 14, right: 14, top: 8, bottom: 8 })
+        .position({ x: 16, y: 16 })
         .onClick(() => {
-          this.message = 'Welcome';
+          this.drawerOpen = !this.drawerOpen;
         })
+
+      // 底部控制条
+      ControlBar({
+        slot: this.selectedSlot,
+        playing: this.playing,
+        capturing: this.capturing,
+        animations: this.slotUi[this.selectedSlot].animations,
+        currentAnimation: this.slotUi[this.selectedSlot].currentAnimation,
+        skins: this.slotUi[this.selectedSlot].skins,
+        selectedSkins: this.slotUi[this.selectedSlot].selectedSkins,
+        pma: this.slotUi[this.selectedSlot].pma,
+        fps: this.fps,
+        onSlotChange: (slot: number): void => {
+          this.switchSlot(slot);
+        },
+        onTogglePlay: (): void => {
+          this.togglePlay();
+        },
+        onAnimationPick: (name: string): void => {
+          this.pickAnimation(name);
+        },
+        onSkinToggle: (name: string): void => {
+          this.toggleSkin(name);
+        },
+        onPmaChange: (pma: boolean): void => {
+          this.togglePma(pma);
+        },
+        onFpsChange: (fps: number): void => {
+          this.changeFps(fps);
+        },
+        onCapture: (): void => {
+          this.startCapture();
+        },
+        onResetTransform: (): void => {
+          this.resetTransform();
+        },
+        onPickBgColor: (): void => {
+          this.openColorDialog();
+        }
+      })
+      .width('100%')
+
+      // 抽屉打开时的遮罩（点击关闭）
+      if (this.drawerOpen) {
+        Column()
+          .width('100%')
+          .height('100%')
+          .backgroundColor($r('app.color.scrim'))
+          .onClick(() => {
+            this.drawerOpen = false;
+          })
+          .transition(TransitionEffect.OPACITY.animation({ duration: 200 }))
+      }
+
+      // 左侧抽屉（关闭时平移出屏）
+      ModelDrawer({
+        models: this.models,
+        mainModelId: this.mainModelId,
+        subModelId: this.subModelId,
+        importing: this.importing,
+        onImport: (): void => {
+          this.importModels();
+        },
+        onSelectMain: (modelId: string): void => {
+          this.applyModelSelection(0, modelId);
+        },
+        onSelectSub: (modelId: string): void => {
+          this.applyModelSelection(1, modelId);
+        },
+        onDelete: (modelId: string): void => {
+          this.deleteModelAction(modelId);
+        },
+        onClose: (): void => {
+          this.drawerOpen = false;
+        }
+      })
+      .width(DRAWER_WIDTH)
+      .height('100%')
+      .position({ x: 0, y: 0 })
+      .translate({ x: this.drawerOpen ? 0 : -(DRAWER_WIDTH + 10) })
+      .animation({ duration: 220, curve: Curve.EaseOut })
+      .hitTestBehavior(this.drawerOpen ? HitTestMode.Default : HitTestMode.None)
     }
-    .height('100%')
     .width('100%')
+    .height('100%')
+    .backgroundColor($r('app.color.page_bg'))
   }
+
+  // ==================== Web 就绪与命令发送 ====================
+
+  private handleWebReady(): void {
+    if (this.webReady) {
+      return;
+    }
+    this.webReady = true;
+    this.sendCommand({ cmd: BridgeCmdNames.SET_GESTURE_SLOT, slot: this.selectedSlot });
+    this.sendCommand({ cmd: BridgeCmdNames.SET_FPS, fps: this.fps });
+    this.sendCommand({ cmd: BridgeCmdNames.SET_BG_COLOR, color: this.bgColor });
+    this.sendCommand({ cmd: BridgeCmdNames.SET_PLAYING, playing: this.playing });
+    this.loadSlotModel(0);
+    this.loadSlotModel(1);
+    const queued = this.pendingScripts;
+    this.pendingScripts = [];
+    for (const script of queued) {
+      this.runScript(script);
+    }
+  }
+
+  private sendCommand(command: BridgeCommand): void {
+    const script = buildRunScript(command);
+    if (!this.webReady) {
+      this.pendingScripts.push(script);
+      return;
+    }
+    this.runScript(script);
+  }
+
+  private runScript(script: string): void {
+    this.webviewController.runJavaScript(script).catch((err: BusinessError): void => {
+      console.error(`runJavaScript failed: ${err.message}`);
+    });
+  }
+
+  /** 按当前状态加载指定槽位模型（含动画/皮肤/变换/PMA 期望值下发）。 */
+  private loadSlotModel(slot: number): void {
+    const prefs = this.prefs;
+    const library = this.library;
+    if (prefs === null || library === null) {
+      return;
+    }
+    const modelId = slot === 0 ? this.mainModelId : this.subModelId;
+    if (modelId.length === 0) {
+      this.sendCommand({ cmd: BridgeCmdNames.CLEAR_SLOT, slot: slot });
+      return;
+    }
+    const model = library.getModelById(modelId);
+    if (model === null) {
+      this.sendCommand({ cmd: BridgeCmdNames.CLEAR_SLOT, slot: slot });
+      return;
+    }
+    const ui = this.slotUi[slot];
+    this.sendCommand({
+      cmd: BridgeCmdNames.LOAD_MODEL,
+      slot: slot,
+      modelId: model.id,
+      skelFile: model.skelFile,
+      atlasFile: model.atlasFile,
+      version: model.version,
+      pma: ui.pma
+    });
+    if (ui.currentAnimation.length > 0) {
+      this.sendCommand({ cmd: BridgeCmdNames.PLAY_ANIMATION, slot: slot, name: ui.currentAnimation, loop: true });
+    }
+    this.sendCommand({ cmd: BridgeCmdNames.SET_SKINS, slot: slot, skins: ui.selectedSkins });
+    this.sendCommand({
+      cmd: BridgeCmdNames.SET_TRANSFORM,
+      slot: slot,
+      scale: prefs.getNumber(SlotPrefs.scaleKey(slot), 1),
+      x: prefs.getNumber(SlotPrefs.posXKey(slot), 0),
+      y: prefs.getNumber(SlotPrefs.posYKey(slot), 0)
+    });
+    this.sendCommand({ cmd: BridgeCmdNames.SET_PMA, slot: slot, pma: ui.pma });
+  }
+
+  /** 用偏好与模型元数据初始化槽位 UI 状态。 */
+  private initSlotUi(slot: number): void {
+    const prefs = this.prefs;
+    const library = this.library;
+    if (prefs === null || library === null) {
+      return;
+    }
+    const modelId = slot === 0 ? this.mainModelId : this.subModelId;
+    const model = modelId.length > 0 ? library.getModelById(modelId) : null;
+    const animations = model !== null ? model.animations : [];
+    const skins = model !== null ? model.skins : [];
+    const savedAnim = prefs.getString(SlotPrefs.animationKey(slot), '');
+    const currentAnimation = savedAnim.length > 0 ? savedAnim : (animations.length > 0 ? animations[0] : '');
+    const selectedSkins = prefs.getSelectedSkins(SlotPrefs.skinsJsonKey(slot), '');
+    const effectiveSkins = selectedSkins.length > 0 ? selectedSkins : (skins.length > 0 ? [skins[0]] : []);
+    const pma = prefs.getBool(SlotPrefs.pmaKey(slot), true);
+    this.updateSlotUi(slot, (state: SlotUiState): void => {
+      state.animations = animations;
+      state.skins = skins;
+      state.currentAnimation = currentAnimation;
+      state.selectedSkins = effectiveSkins;
+      state.pma = pma;
+    });
+  }
+
+  /** 不可变更新槽位 UI 状态（clone + 数组重赋值，保证 @State 刷新）。 */
+  private updateSlotUi(slot: number, mutate: (state: SlotUiState) => void): void {
+    const copy = this.slotUi[slot].clone();
+    mutate(copy);
+    const newArray = [this.slotUi[0], this.slotUi[1]];
+    newArray[slot] = copy;
+    this.slotUi = newArray;
+  }
+
+  // ==================== Web 事件处理 ====================
+
+  private handleModelLoaded(json: string): void {
+    const event = parseModelLoadedEvent(json);
+    if (event === null) {
+      return;
+    }
+    if (this.library !== null) {
+      this.library.updateModelAnimSkins(event.modelId, event.animations, event.skins);
+      this.models = this.library.getModels();
+    }
+    this.updateSlotUi(event.slot, (state: SlotUiState): void => {
+      state.animations = event.animations;
+      state.skins = event.skins;
+      if (!event.animations.includes(state.currentAnimation) && event.animations.length > 0) {
+        state.currentAnimation = event.animations[0];
+      }
+      const kept = state.selectedSkins.filter((name: string): boolean => event.skins.includes(name));
+      state.selectedSkins = kept.length > 0 ? kept : (event.skins.length > 0 ? [event.skins[0]] : []);
+    });
+    const ui = this.slotUi[event.slot];
+    const prefs = this.prefs;
+    if (prefs !== null) {
+      prefs.putString(SlotPrefs.animationKey(event.slot), ui.currentAnimation);
+      prefs.putSelectedSkins(SlotPrefs.skinsJsonKey(event.slot), ui.selectedSkins);
+      prefs.flush();
+    }
+    // 加载后校正动画与皮肤（偏好中的名称可能已不存在）
+    this.sendCommand({ cmd: BridgeCmdNames.PLAY_ANIMATION, slot: event.slot, name: ui.currentAnimation, loop: true });
+    this.sendCommand({ cmd: BridgeCmdNames.SET_SKINS, slot: event.slot, skins: ui.selectedSkins });
+  }
+
+  private handleBridgeError(json: string): void {
+    const event = parseBridgeErrorEvent(json);
+    if (event === null) {
+      return;
+    }
+    if (event.code === 'CAPTURE_ERROR') {
+      this.capturing = false;
+      this.clearCaptureTimer();
+    }
+    this.getUIContext().getPromptAction().showToast({ message: event.message, duration: 2500 });
+  }
+
+  private handleTransformChanged(json: string): void {
+    const event = parseTransformChangedEvent(json);
+    if (event === null) {
+      return;
+    }
+    const prefs = this.prefs;
+    if (prefs !== null) {
+      prefs.putNumber(SlotPrefs.scaleKey(event.slot), event.scale);
+      prefs.putNumber(SlotPrefs.posXKey(event.slot), event.x);
+      prefs.putNumber(SlotPrefs.posYKey(event.slot), event.y);
+      prefs.flush();
+    }
+  }
+
+  private handleAnimationChanged(json: string): void {
+    const event = parseAnimationChangedEvent(json);
+    if (event === null) {
+      return;
+    }
+    this.updateSlotUi(event.slot, (state: SlotUiState): void => {
+      state.currentAnimation = event.name;
+    });
+    const prefs = this.prefs;
+    if (prefs !== null) {
+      prefs.putString(SlotPrefs.animationKey(event.slot), event.name);
+      prefs.flush();
+    }
+  }
+
+  private handleCaptureChunk(json: string): void {
+    const event = parseCaptureChunkEvent(json);
+    if (event === null) {
+      return;
+    }
+    if (event.index === 0) {
+      this.captureChunks = [];
+      this.captureTotal = event.total;
+    }
+    if (event.total !== this.captureTotal || event.index !== this.captureChunks.length) {
+      return;
+    }
+    this.captureChunks.push(event.data);
+  }
+
+  private handleCaptureDone(json: string): void {
+    const event = parseCaptureFrameEvent(json);
+    if (event === null || !event.done) {
+      return;
+    }
+    this.clearCaptureTimer();
+    if (this.captureTotal === 0 || this.captureChunks.length !== this.captureTotal) {
+      this.capturing = false;
+      this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_capture_fail') });
+      return;
+    }
+    const base64 = this.captureChunks.join('');
+    this.captureChunks = [];
+    this.captureTotal = 0;
+    FrameExporter.savePng(getContext(this), base64)
+      .then((uri: string): void => {
+        this.capturing = false;
+        if (uri.length === 0) {
+          this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_capture_cancel') });
+        } else {
+          this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_capture_ok') });
+        }
+      })
+      .catch((err: BusinessError): void => {
+        this.capturing = false;
+        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_capture_fail') });
+      });
+  }
+
+  // ==================== 用户操作 ====================
+
+  private async importModels(): Promise<void> {
+    if (this.importing) {
+      return;
+    }
+    const docPicker = new picker.DocumentViewPicker(getContext(this));
+    const options = new picker.DocumentSelectOptions();
+    options.fileSuffixFilters = ['.zip'];
+    options.maxSelectNumber = 1;
+    let uris: Array<string> = [];
+    try {
+      uris = await docPicker.select(options);
+    } catch (err) {
+      return;
+    }
+    if (uris.length === 0) {
+      return;
+    }
+    const library = this.library;
+    if (library === null) {
+      return;
+    }
+    this.importing = true;
+    try {
+      const imported = await library.importZip(uris[0]);
+      this.models = library.getModels();
+      this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_import_ok') });
+      if (this.mainModelId.length === 0 && imported.length > 0) {
+        this.applyModelSelection(0, imported[0].id);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '';
+      this.getUIContext().getPromptAction().showToast({
+        message: message.length > 0 ? message : $r('app.string.toast_import_fail')
+      });
+    } finally {
+      this.importing = false;
+    }
+  }
+
+  /** 选择模型到指定槽位（4.1 运行时门禁 + 偏好持久化 + 下发加载）。 */
+  private applyModelSelection(slot: number, modelId: string): void {
+    const library = this.library;
+    const prefs = this.prefs;
+    if (library === null || prefs === null) {
+      return;
+    }
+    const model = library.getModelById(modelId);
+    if (model === null) {
+      return;
+    }
+    if (!model.isSupported()) {
+      this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_unsupported') });
+      return;
+    }
+    if (slot === 0) {
+      this.mainModelId = modelId;
+      prefs.putString(PrefsKeys.ACTIVE_MODEL_ID, modelId);
+    } else {
+      this.subModelId = modelId;
+      prefs.putString(PrefsKeys.MODEL2_ID, modelId);
+    }
+    prefs.flush();
+    this.initSlotUi(slot);
+    this.loadSlotModel(slot);
+  }
+
+  private deleteModelAction(modelId: string): void {
+    const library = this.library;
+    if (library === null) {
+      return;
+    }
+    this.getUIContext().showAlertDialog({
+      message: $r('app.string.confirm_delete'),
+      primaryButton: {
+        value: $r('app.string.dialog_cancel'),
+        action: (): void => {
+        }
+      },
+      secondaryButton: {
+        value: $r('app.string.dialog_delete'),
+        fontColor: $r('app.color.danger'),
+        action: (): void => {
+          this.performDelete(modelId);
+        }
+      }
+    });
+  }
+
+  private performDelete(modelId: string): void {
+    const library = this.library;
+    const prefs = this.prefs;
+    if (library === null || prefs === null) {
+      return;
+    }
+    library.deleteModel(modelId)
+      .then((): void => {
+        this.models = library.getModels();
+        if (this.mainModelId === modelId) {
+          this.mainModelId = '';
+          prefs.putString(PrefsKeys.ACTIVE_MODEL_ID, '');
+          this.sendCommand({ cmd: BridgeCmdNames.CLEAR_SLOT, slot: 0 });
+          this.resetSlotUi(0);
+        }
+        if (this.subModelId === modelId) {
+          this.subModelId = '';
+          prefs.putString(PrefsKeys.MODEL2_ID, '');
+          this.sendCommand({ cmd: BridgeCmdNames.CLEAR_SLOT, slot: 1 });
+          this.resetSlotUi(1);
+        }
+        prefs.flush();
+        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_deleted') });
+      })
+      .catch((err: BusinessError): void => {
+        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_delete_fail') });
+      });
+  }
+
+  private resetSlotUi(slot: number): void {
+    this.updateSlotUi(slot, (state: SlotUiState): void => {
+      state.animations = [];
+      state.skins = [];
+      state.currentAnimation = '';
+      state.selectedSkins = [];
+    });
+  }
+
+  private switchSlot(slot: number): void {
+    if (slot === this.selectedSlot) {
+      return;
+    }
+    this.selectedSlot = slot;
+    this.sendCommand({ cmd: BridgeCmdNames.SET_GESTURE_SLOT, slot: slot });
+    const prefs = this.prefs;
+    if (prefs !== null) {
+      prefs.putNumber(PrefsKeys.SELECTED_SLOT, slot);
+      prefs.flush();
+    }
+  }
+
+  private togglePlay(): void {
+    this.playing = !this.playing;
+    this.sendCommand({ cmd: BridgeCmdNames.SET_PLAYING, playing: this.playing });
+  }
+
+  private pickAnimation(name: string): void {
+    const slot = this.selectedSlot;
+    this.updateSlotUi(slot, (state: SlotUiState): void => {
+      state.currentAnimation = name;
+    });
+    this.sendCommand({ cmd: BridgeCmdNames.PLAY_ANIMATION, slot: slot, name: name, loop: true });
+    const prefs = this.prefs;
+    if (prefs !== null) {
+      prefs.putString(SlotPrefs.animationKey(slot), name);
+      prefs.flush();
+    }
+  }
+
+  private toggleSkin(name: string): void {
+    const slot = this.selectedSlot;
+    this.updateSlotUi(slot, (state: SlotUiState): void => {
+      if (state.selectedSkins.includes(name)) {
+        state.selectedSkins = state.selectedSkins.filter((item: string): boolean => item !== name);
+      } else {
+        const next = state.selectedSkins.slice();
+        next.push(name);
+        state.selectedSkins = next;
+      }
+    });
+    const ui = this.slotUi[slot];
+    this.sendCommand({ cmd: BridgeCmdNames.SET_SKINS, slot: slot, skins: ui.selectedSkins });
+    const prefs = this.prefs;
+    if (prefs !== null) {
+      prefs.putSelectedSkins(SlotPrefs.skinsJsonKey(slot), ui.selectedSkins);
+      prefs.flush();
+    }
+  }
+
+  private togglePma(pma: boolean): void {
+    const slot = this.selectedSlot;
+    this.updateSlotUi(slot, (state: SlotUiState): void => {
+      state.pma = pma;
+    });
+    this.sendCommand({ cmd: BridgeCmdNames.SET_PMA, slot: slot, pma: pma });
+    const prefs = this.prefs;
+    if (prefs !== null) {
+      prefs.putBool(SlotPrefs.pmaKey(slot), pma);
+      prefs.flush();
+    }
+  }
+
+  private changeFps(fps: number): void {
+    const value = clampInt(fps, 15, 120);
+    if (value === this.fps) {
+      return;
+    }
+    this.fps = value;
+    this.sendCommand({ cmd: BridgeCmdNames.SET_FPS, fps: value });
+    const prefs = this.prefs;
+    if (prefs !== null) {
+      prefs.putNumber(PrefsKeys.TARGET_FPS, value);
+      prefs.flush();
+    }
+  }
+
+  private resetTransform(): void {
+    const slot = this.selectedSlot;
+    this.sendCommand({ cmd: BridgeCmdNames.SET_TRANSFORM, slot: slot, scale: 1, x: 0, y: 0 });
+    const prefs = this.prefs;
+    if (prefs !== null) {
+      prefs.putNumber(SlotPrefs.scaleKey(slot), 1);
+      prefs.putNumber(SlotPrefs.posXKey(slot), 0);
+      prefs.putNumber(SlotPrefs.posYKey(slot), 0);
+      prefs.flush();
+    }
+    this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_transform_reset') });
+  }
+
+  private openColorDialog(): void {
+    this.colorDialogController = new CustomDialogController({
+      builder: BgColorPickerDialog({
+        pickedColor: this.bgColor,
+        confirm: (color: string): void => {
+          this.applyBgColor(color);
+        }
+      }),
+      autoCancel: true
+    });
+    this.colorDialogController.open();
+  }
+
+  private applyBgColor(color: string): void {
+    this.bgColor = color;
+    this.sendCommand({ cmd: BridgeCmdNames.SET_BG_COLOR, color: color });
+    const prefs = this.prefs;
+    if (prefs !== null) {
+      prefs.putNumber(PrefsKeys.BG_COLOR, hexToIntColor(color));
+      prefs.flush();
+    }
+  }
+
+  private startCapture(): void {
+    if (this.capturing || !this.webReady) {
+      return;
+    }
+    this.capturing = true;
+    this.captureChunks = [];
+    this.captureTotal = 0;
+    this.sendCommand({ cmd: BridgeCmdNames.CAPTURE_FRAME });
+    this.captureTimerId = setTimeout((): void => {
+      if (this.capturing) {
+        this.capturing = false;
+        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_capture_fail') });
+      }
+    }, CAPTURE_TIMEOUT_MS);
+  }
+
+  private clearCaptureTimer(): void {
+    if (this.captureTimerId >= 0) {
+      clearTimeout(this.captureTimerId);
+      this.captureTimerId = -1;
+    }
+  }
+}
+
+// ==================== 颜色与数值工具（模块级具名函数） ====================
+
+/** 0xAARRGGBB 整型色值 → '#RRGGBB' 显示串。 */
+function intColorToHex(color: number): string {
+  const rgb = color & 0xFFFFFF;
+  const r = (rgb >> 16) & 0xFF;
+  const g = (rgb >> 8) & 0xFF;
+  const b = rgb & 0xFF;
+  return `#${toHex2(r)}${toHex2(g)}${toHex2(b)}`;
+}
+
+function toHex2(value: number): string {
+  const hex = value.toString(16).toUpperCase();
+  return hex.length === 1 ? `0${hex}` : hex;
+}
+
+/** '#RRGGBB' → 0xAARRGGBB 整型色值（非法回退默认背景色）。 */
+function hexToIntColor(hex: string): number {
+  const clean = hex.startsWith('#') ? hex.substring(1) : hex;
+  if (clean.length !== 6) {
+    return PrefsManager.defaultBgColor;
+  }
+  const rgb = parseInt(clean, 16);
+  if (Number.isNaN(rgb)) {
+    return PrefsManager.defaultBgColor;
+  }
+  return 0xFF000000 | rgb;
+}
+
+/** 数值夹取并取整。 */
+function clampInt(value: number, min: number, max: number): number {
+  const v = Math.round(value);
+  return Math.min(max, Math.max(min, v));
 }
