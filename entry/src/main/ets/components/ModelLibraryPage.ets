@@ -104,12 +104,14 @@ export struct ModelLibraryPage {
   }
 
   private toggleCollapse(groupName: string): void {
-    const idx = this.collapsedGroups.indexOf(groupName);
-    if (idx >= 0) {
-      this.collapsedGroups.splice(idx, 1);
-    } else {
-      this.collapsedGroups.push(groupName);
-    }
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.Friction }, () => {
+      const idx = this.collapsedGroups.indexOf(groupName);
+      if (idx >= 0) {
+        this.collapsedGroups.splice(idx, 1);
+      } else {
+        this.collapsedGroups.push(groupName);
+      }
+    });
   }
 
   /** 全部分组是否都处于折叠态。 */
@@ -128,15 +130,17 @@ export struct ModelLibraryPage {
 
   /** 一键折叠/展开全部分组：任一展开 → 全折叠；全折叠 → 全展开。 */
   private toggleCollapseAll(): void {
-    if (this.allGroupsCollapsed()) {
-      this.collapsedGroups = [];
-      return;
-    }
-    const names = new Array<string>();
-    for (const g of this.buildGroups()) {
-      names.push(g.name);
-    }
-    this.collapsedGroups = names;
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.Friction }, () => {
+      if (this.allGroupsCollapsed()) {
+        this.collapsedGroups = [];
+        return;
+      }
+      const names = new Array<string>();
+      for (const g of this.buildGroups()) {
+        names.push(g.name);
+      }
+      this.collapsedGroups = names;
+    });
   }
 
   // ==================== 批量管理模式 ====================
@@ -275,9 +279,9 @@ export struct ModelLibraryPage {
             })
           }
           Button() {
-            Text('⇕')
+            SymbolGlyph(this.allGroupsCollapsed() ? $r('sys.symbol.chevron_up') : $r('sys.symbol.chevron_down'))
               .fontSize(16)
-              .fontColor(this.theme().textSecondary)
+              .fontColor([this.theme().textSecondary])
           }
           .width(38)
           .height(38)
@@ -322,7 +326,7 @@ export struct ModelLibraryPage {
             ListItem() {
               Column({ space: 10 }) {
                 this.GroupHeader(group)
-                if (!this.isCollapsed(group.name)) {
+                if (!this.isCollapsed(group.name) || this.searchQuery.trim().length > 0) {
                   this.ModelPairGrid(group.models)
                 }
               }
@@ -381,8 +385,22 @@ export struct ModelLibraryPage {
             return;
           }
           const ids = this.selectedIds.slice();
-          this.exitBatch();
-          this.onDeleteModels(ids);
+          this.getUIContext().showAlertDialog({
+            message: $r('app.string.batch_delete_confirm', ids.length),
+            primaryButton: {
+              value: $r('app.string.dialog_cancel'),
+              action: (): void => {
+              }
+            },
+            secondaryButton: {
+              value: $r('app.string.dialog_delete'),
+              fontColor: this.theme().danger,
+              action: (): void => {
+                this.exitBatch();
+                this.onDeleteModels(ids);
+              }
+            }
+          });
         })
 
       Button($r('app.string.batch_done'))
@@ -441,9 +459,9 @@ export struct ModelLibraryPage {
   @Builder
   GroupHeader(group: ModelGroup) {
     Row({ space: 8 }) {
-      Text(this.isCollapsed(group.name) ? '▸' : '▾')
+      SymbolGlyph(this.isCollapsed(group.name) ? $r('sys.symbol.chevron_right') : $r('sys.symbol.chevron_down'))
         .fontSize(12)
-        .fontColor(this.theme().textSecondary)
+        .fontColor([this.theme().textSecondary])
         .width(16)
       Text(group.name.length === 0 ? $r('app.string.group_ungrouped') : group.name)
         .fontSize(13)
@@ -459,11 +477,10 @@ export struct ModelLibraryPage {
         .padding({ left: 8, right: 8, top: 2, bottom: 2 })
         .borderRadius(8)
       if (group.name.length > 0) {
-        Text('⋮')
-          .fontSize(16)
-          .fontColor(this.theme().textSecondary)
+        SymbolGlyph($r('sys.symbol.more'))
+          .fontSize(14)
+          .fontColor([this.theme().textSecondary])
           .width(24)
-          .textAlign(TextAlign.Center)
           .bindMenu([
             {
               value: $r('app.string.menu_rename_group'),
@@ -595,13 +612,20 @@ export struct ModelLibraryPage {
         .layoutWeight(1)
 
         if (!this.batchMode) {
-          Text('✕')
-            .fontSize(16)
-            .fontColor(this.theme().textSecondary)
-            .padding(6)
-            .onClick(() => {
-              this.onDelete(model.id);
-            })
+          Button() {
+            SymbolGlyph($r('sys.symbol.xmark'))
+              .fontSize(14)
+              .fontColor([this.theme().textSecondary])
+          }
+          .width(32)
+          .height(32)
+          .borderRadius(16)
+          .backgroundColor(Color.Transparent)
+          .padding(0)
+          .accessibilityText($r('app.string.a11y_delete_model'))
+          .onClick(() => {
+            this.onDelete(model.id);
+          })
         }
       }
       .width('100%')
@@ -644,5 +668,39 @@ export struct ModelLibraryPage {
         this.toggleSelect(model.id);
       }
     })
+    .bindContextMenuByResponseType(this.cardMenuItems(model), ResponseType.LongPress)
+  }
+
+  /** 长按模型卡片快捷菜单项：设为主/设为副/移动分组/删除（批量模式下返回空数组不弹菜单）。 */
+  private cardMenuItems(model: SpineModelItem): Array<MenuElement> {
+    if (this.batchMode) {
+      return [];
+    }
+    return [
+      {
+        value: $r('app.string.set_main'),
+        action: (): void => {
+          this.onSelectMain(model.id);
+        }
+      },
+      {
+        value: $r('app.string.set_sub'),
+        action: (): void => {
+          this.onSelectSub(model.id);
+        }
+      },
+      {
+        value: $r('app.string.menu_move_group'),
+        action: (): void => {
+          this.onMoveToGroup(model.id);
+        }
+      },
+      {
+        value: $r('app.string.dialog_delete'),
+        action: (): void => {
+          this.onDelete(model.id);
+        }
+      }
+    ];
   }
 }

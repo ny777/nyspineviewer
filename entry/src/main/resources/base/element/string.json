@@ -249,6 +249,14 @@
       "value": "删除分组"
     },
     {
+      "name": "menu_move_group",
+      "value": "移动分组"
+    },
+    {
+      "name": "a11y_delete_model",
+      "value": "删除模型"
+    },
+    {
       "name": "confirm_dissolve_group",
       "value": "确定解散分组「%s」？组内模型将保留并移入「未分组」"
     },
