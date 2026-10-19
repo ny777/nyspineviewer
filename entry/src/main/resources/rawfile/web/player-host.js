@@ -36,6 +36,7 @@
   var lastFrameTime = 0;
   var bgColor = [0.059, 0.090, 0.165, 1.0]; // #0F172A
   var gestureSlot = 0;
+  var diag = { raf: 0, drawn: 0, last: 0, dt: 0 };
 
   function SlotState() {
     this.reset();
@@ -248,6 +249,9 @@
         slot.state = animState;
         slot.status = 'loaded';
         slot.animationError = false;
+        console.log('[spine] modelLoaded slot=' + slotIdx + ' anims=' +
+          (skeletonData.animations ? skeletonData.animations.length : 0) +
+          ' skins=' + (skeletonData.skins ? skeletonData.skins.length : 0));
         applyDesired(slotIdx);
         notifyModelLoaded(slotIdx, slot.modelId, skeletonData);
         renderFrame(0); // 立即出画面，不等下一帧
@@ -297,6 +301,7 @@
       slot.state.setAnimation(0, name, !!loop);
       slot.currentAnimationName = name;
       slot.animationError = false;
+      console.log('[spine] playAnim slot=' + slotIdx + ' name=' + name + ' loop=' + !!loop + ' ok');
     } catch (e) {
       notifyError(slotIdx, 'ANIMATION_ERROR', (e && e.message) || e);
     }
@@ -481,6 +486,7 @@
     if (!gl || !renderer) {
       return;
     }
+    diag.drawn++;
     resizeIfNeeded();
     var size = cssSize();
     gl.viewport(0, 0, canvas.width, canvas.height);
@@ -520,6 +526,18 @@
 
   function tick(now) {
     window.requestAnimationFrame(tick);
+    diag.raf++;
+    if (diag.last === 0) {
+      diag.last = now;
+    } else if (now - diag.last >= 2000) {
+      console.log('[spine] diag raf=' + diag.raf + ' drawn=' + diag.drawn + ' playing=' + playing +
+        ' fps=' + fps + ' dt=' + diag.dt.toFixed(3) +
+        ' s0=' + slots[0].status + '/' + (slots[0].currentAnimationName || '-') +
+        (slots[0].state ? '/st' : '/nost'));
+      diag.raf = 0;
+      diag.drawn = 0;
+      diag.last = now;
+    }
     var minInterval = 1000 / fps;
     if (now - lastFrameTime < minInterval - 1) {
       return;
@@ -527,6 +545,7 @@
     var delta = lastFrameTime > 0 ? (now - lastFrameTime) / 1000 : 1 / 60;
     delta = Math.min(delta, 0.25); // 后台切回时避免大步长跳变
     lastFrameTime = now;
+    diag.dt = delta;
     if (!playing) {
       return;
     }

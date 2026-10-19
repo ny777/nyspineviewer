@@ -73,6 +73,7 @@ struct Index {
   @State importing: boolean = false;
   @State selectedSlot: number = 0;
   @State playing: boolean = true;
+  private pausedByHide: boolean = false;
   @State fps: number = 60;
   @State bgColor: string = '#0F172A';
   @State capturing: boolean = false;
@@ -124,8 +125,24 @@ struct Index {
 
   onPageHide(): void {
     if (this.playing) {
+      this.pausedByHide = true;
       this.playing = false;
       this.sendCommand({ cmd: BridgeCmdNames.SET_PLAYING, playing: false });
+    }
+  }
+
+  onPageShow(): void {
+    this.resumeAfterOverlay();
+  }
+
+  /** 系统选择器/保存器关闭后恢复被 onPageHide 暂停的播放。 */
+  private resumeAfterOverlay(): void {
+    if (this.pausedByHide) {
+      this.pausedByHide = false;
+      if (!this.playing) {
+        this.playing = true;
+        this.sendCommand({ cmd: BridgeCmdNames.SET_PLAYING, playing: true });
+      }
     }
   }
 
@@ -462,6 +479,7 @@ struct Index {
     FrameExporter.savePng(getContext(this), base64)
       .then((uri: string): void => {
         this.capturing = false;
+        this.resumeAfterOverlay();
         if (uri.length === 0) {
           this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_capture_cancel') });
         } else {
@@ -470,6 +488,7 @@ struct Index {
       })
       .catch((err: BusinessError): void => {
         this.capturing = false;
+        this.resumeAfterOverlay();
         this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_capture_fail') });
       });
   }
@@ -488,8 +507,10 @@ struct Index {
     try {
       uris = await docPicker.select(options);
     } catch (err) {
+      this.resumeAfterOverlay();
       return;
     }
+    this.resumeAfterOverlay();
     if (uris.length === 0) {
       return;
     }
