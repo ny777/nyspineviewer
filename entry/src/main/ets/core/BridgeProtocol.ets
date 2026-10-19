@@ -39,6 +39,7 @@ export class BridgeCmdNames {
   static readonly SET_BG_COLOR: string = 'setBackgroundColor';
   static readonly CAPTURE_FRAME: string = 'captureFrame';
   static readonly CLEAR_SLOT: string = 'clearSlot';
+  static readonly SET_GESTURE_SLOT: string = 'setGestureSlot';
 }
 
 /** Web→ArkTS：模型加载完成事件。 */
@@ -69,6 +70,12 @@ export interface TransformChangedEvent {
   y: number;
 }
 
+/** Web→ArkTS：点按切换动画后的回传（UI 下拉框同步）。 */
+export interface AnimationChangedEvent {
+  slot: number;
+  name: string;
+}
+
 // 以下 raw 接口仅用于 JSON.parse 单次断言归一，逐字段 typeof 校验后拷入严格事件。
 
 interface ModelLoadedRaw {
@@ -93,6 +100,11 @@ interface TransformChangedRaw {
   scale?: Object;
   x?: Object;
   y?: Object;
+}
+
+interface AnimationChangedRaw {
+  slot?: Object;
+  name?: Object;
 }
 
 /**
@@ -187,17 +199,42 @@ export function parseTransformChangedEvent(json: string): TransformChangedEvent 
   return { slot: slot, scale: scale, x: x, y: y };
 }
 
+/** 解析 onAnimationChanged 回传 JSON。 */
+export function parseAnimationChangedEvent(json: string): AnimationChangedEvent | null {
+  let parsed: object | null = null;
+  try {
+    parsed = JSON.parse(json);
+  } catch (err) {
+    return null;
+  }
+  if (parsed === null) {
+    return null;
+  }
+  const raw = parsed as AnimationChangedRaw;
+  if (typeof raw.slot !== 'number' || typeof raw.name !== 'string') {
+    return null;
+  }
+  const slot: number = raw.slot;
+  const name: string = raw.name;
+  return { slot: slot, name: name };
+}
+
 /** 把 Object[] 逐项校验为 string[]，任何非字符串项返回 null。 */
-function toStringArray(value: Object | undefined): Array<string> | null {
-  if (!Array.isArray(value)) {
+function toStringArray(value: Array<Object> | undefined): Array<string> | null {
+  if (value === undefined || value === null) {
     return null;
   }
   const result: Array<string> = [];
-  for (const item of value) {
-    if (typeof item !== 'string') {
-      return null;
+  try {
+    for (const item of value) {
+      if (typeof item !== 'string') {
+        return null;
+      }
+      result.push(item);
     }
-    result.push(item);
+  } catch (err) {
+    // 字段实际不是数组（恶意/损坏回传），按非法处理
+    return null;
   }
   return result;
 }
