@@ -484,9 +484,8 @@
     deleteBgTexture();
     bgTex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, bgTex);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    // 不设 UNPACK_FLIP_Y：四边形 uv 已按「v=0 = 图顶部」布局（y=+1 顶点取 v=0）
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bgImage);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
