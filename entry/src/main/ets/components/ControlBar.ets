@@ -1,6 +1,8 @@
 /**
- * 播放页悬浮控制条：槽位切换 / 播放暂停 / 截帧 / 重置变换 / 动画菜单 /
- * 皮肤多选。PMA、帧率与背景设置在设置页；状态与持久化由父页面持有。
+ * 播放页悬浮控制条（单行全图标式）：槽位切换（主/副紧凑单字）/
+ * 皮肤多选 + 动画菜单（中部横向滚动，动画 chip 置于最右）/
+ * 播放暂停图标 / 截图（SaveButton 安全组件，点击临时授权直存系统图库）/
+ * 重置变换图标 / 清空当前槽位图标。
  */
 import { getTheme, ThemeColors } from '../core/Theme';
 
@@ -35,124 +37,127 @@ export struct ControlBar {
   }
 
   build() {
-    Column({ space: 10 }) {
-      // 行1：槽位 / 播放 / 截帧 / 重置变换
-      Row({ space: 8 }) {
-        Row() {
-          Text($r('app.string.slot_main'))
+    Row({ space: 6 }) {
+      // 槽位切换：主/副紧凑单字拼接 pill
+      Text($r('app.string.slot_main_short'))
+        .fontSize(12)
+        .fontWeight(FontWeight.Medium)
+        .textAlign(TextAlign.Center)
+        .width(32)
+        .height(32)
+        .backgroundColor(this.slot === 0 ? this.theme().cardSelected : this.theme().chip)
+        .fontColor(this.slot === 0 ? Color.White : this.theme().textSecondary)
+        .borderRadius({ topLeft: 16, bottomLeft: 16 })
+        .accessibilityText($r('app.string.slot_main'))
+        .onClick(() => {
+          this.onSlotChange(0);
+        })
+      Text($r('app.string.slot_sub_short'))
+        .fontSize(12)
+        .fontWeight(FontWeight.Medium)
+        .textAlign(TextAlign.Center)
+        .width(32)
+        .height(32)
+        .backgroundColor(this.slot === 1 ? this.theme().cardSelected : this.theme().chip)
+        .fontColor(this.slot === 1 ? Color.White : this.theme().textSecondary)
+        .borderRadius({ topRight: 16, bottomRight: 16 })
+        .accessibilityText($r('app.string.slot_sub'))
+        .onClick(() => {
+          this.onSlotChange(1);
+        })
+
+      // 中部弹性区：皮肤 chips + 动画 chip（最右），空间不足时可滚动
+      Scroll() {
+        Row({ space: 6 }) {
+          ForEach(this.skins, (name: string) => {
+            Text(name)
+              .fontSize(12)
+              .maxLines(1)
+              .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+              .borderRadius(13)
+              .backgroundColor(this.selectedSkins.includes(name) ? this.theme().cardSelected : this.theme().chip)
+              .fontColor(this.selectedSkins.includes(name) ? Color.White : this.theme().textSecondary)
+              .onClick(() => {
+                this.onSkinToggle(name);
+              })
+          }, (name: string) => name)
+          Text(this.currentAnimation.length > 0 ? this.currentAnimation : $r('app.string.no_animation'))
             .fontSize(12)
-            .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-            .backgroundColor(this.slot === 0 ? this.theme().cardSelected : this.theme().chip)
-            .fontColor(this.slot === 0 ? Color.White : this.theme().textSecondary)
-            .borderRadius({ topLeft: 14, bottomLeft: 14 })
-            .onClick(() => {
-              this.onSlotChange(0);
-            })
-          Text($r('app.string.slot_sub'))
-            .fontSize(12)
-            .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-            .backgroundColor(this.slot === 1 ? this.theme().cardSelected : this.theme().chip)
-            .fontColor(this.slot === 1 ? Color.White : this.theme().textSecondary)
-            .borderRadius({ topRight: 14, bottomRight: 14 })
-            .onClick(() => {
-              this.onSlotChange(1);
-            })
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .constraintSize({ maxWidth: 90 })
+            .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+            .borderRadius(13)
+            .backgroundColor(this.theme().chip)
+            .fontColor(this.theme().text)
+            .bindMenu(this.AnimationMenuBuilder)
         }
-        .alignItems(VerticalAlign.Center)
+      }
+      .scrollable(ScrollDirection.Horizontal)
+      .scrollBar(BarState.Off)
+      .layoutWeight(1)
 
-        Button(this.playing ? $r('app.string.pause') : $r('app.string.play'))
-          .fontSize(12)
-          .height(30)
-          .padding({ left: 10, right: 10 })
-          .backgroundColor(this.theme().chip)
-          .fontColor(this.theme().text)
-          .onClick(() => {
-            this.onTogglePlay();
-          })
+      // 播放/暂停图标
+      Button() {
+        SymbolGlyph(this.playing ? $r('sys.symbol.pause') : $r('sys.symbol.play_fill'))
+          .fontSize(16)
+          .fontColor([this.theme().text])
+      }
+      .width(36)
+      .height(36)
+      .borderRadius(18)
+      .backgroundColor(this.theme().chip)
+      .padding(0)
+      .accessibilityText(this.playing ? $r('app.string.pause') : $r('app.string.play'))
+      .onClick(() => {
+        this.onTogglePlay();
+      })
 
-        Button($r('app.string.capture'))
-          .fontSize(12)
-          .height(30)
-          .padding({ left: 10, right: 10 })
-          .backgroundColor(this.theme().accent)
-          .fontColor(Color.White)
-          .enabled(!this.capturing)
-          .onClick(() => {
+      // 截图（SaveButton 安全组件：点击临时授权，直存系统图库）
+      SaveButton({ icon: SaveIconStyle.FULL_FILLED, buttonType: ButtonType.Capsule })
+        .onClick((event: ClickEvent, result: SaveButtonOnClickResult) => {
+          if (result === SaveButtonOnClickResult.SUCCESS) {
             this.onCapture();
-          })
-
-        Button($r('app.string.reset_transform'))
-          .fontSize(12)
-          .height(30)
-          .padding({ left: 10, right: 10 })
-          .backgroundColor(this.theme().chip)
-          .fontColor(this.theme().text)
-          .onClick(() => {
-            this.onResetTransform();
-          })
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-
-      // 行2：动画 + 皮肤 + 清空当前槽位模型（合并单行）
-      Row({ space: 10 }) {
-        Text($r('app.string.animation_label'))
-          .fontSize(12)
-          .fontColor(this.theme().textSecondary)
-        Text(this.currentAnimation.length > 0 ? this.currentAnimation : $r('app.string.no_animation'))
-          .fontSize(12)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .constraintSize({ maxWidth: 160 })
-          .padding({ left: 12, right: 12, top: 7, bottom: 7 })
-          .borderRadius(15)
-          .backgroundColor(this.theme().chip)
-          .fontColor(this.theme().text)
-          .bindMenu(this.AnimationMenuBuilder)
-        if (this.skins.length > 0) {
-          Text($r('app.string.skins_label'))
-            .fontSize(12)
-            .fontColor(this.theme().textSecondary)
-          Scroll() {
-            Row({ space: 8 }) {
-              ForEach(this.skins, (name: string) => {
-                Text(name)
-                  .fontSize(12)
-                  .maxLines(1)
-                  .padding({ left: 12, right: 12, top: 5, bottom: 5 })
-                  .borderRadius(13)
-                  .backgroundColor(this.selectedSkins.includes(name) ? this.theme().cardSelected : this.theme().chip)
-                  .fontColor(this.selectedSkins.includes(name) ? Color.White : this.theme().textSecondary)
-                  .onClick(() => {
-                    this.onSkinToggle(name);
-                  })
-              }, (name: string) => name)
-            }
           }
-          .scrollable(ScrollDirection.Horizontal)
-          .scrollBar(BarState.Off)
-          .layoutWeight(1)
-        } else {
-          Blank()
-            .layoutWeight(1)
-        }
-        Text(this.slot === 0 ? $r('app.string.clear_main_model') : $r('app.string.clear_sub_model'))
-          .fontSize(12)
-          .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-          .borderRadius(14)
-          .backgroundColor(this.theme().chip)
-          .fontColor(this.theme().danger)
-          .onClick(() => {
-            this.onClearSlot();
-          })
+        })
+
+      // 重置变换图标
+      Button() {
+        SymbolGlyph($r('sys.symbol.arrow_counterclockwise'))
+          .fontSize(16)
+          .fontColor([this.theme().text])
       }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
+      .width(36)
+      .height(36)
+      .borderRadius(18)
+      .backgroundColor(this.theme().chip)
+      .padding(0)
+      .accessibilityText($r('app.string.reset_transform'))
+      .onClick(() => {
+        this.onResetTransform();
+      })
+
+      // 清空当前槽位图标
+      Button() {
+        SymbolGlyph($r('sys.symbol.trash'))
+          .fontSize(16)
+          .fontColor([this.theme().danger])
+      }
+      .width(36)
+      .height(36)
+      .borderRadius(18)
+      .backgroundColor(this.theme().chip)
+      .padding(0)
+      .accessibilityText(this.slot === 0 ? $r('app.string.clear_main_model') : $r('app.string.clear_sub_model'))
+      .onClick(() => {
+        this.onClearSlot();
+      })
     }
-    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+    .padding({ left: 12, right: 12, top: 10, bottom: 10 })
     .borderRadius(20)
     .backgroundColor(this.theme().bottomBarBg)
-    .width('100%')
   }
 
   @Builder

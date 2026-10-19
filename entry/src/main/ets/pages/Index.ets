@@ -22,7 +22,7 @@ import {
   parseTransformChangedEvent,
   parseAnimationChangedEvent
 } from '../core/BridgeProtocol';
-import { SpineModelLibrary } from '../model/SpineModelLibrary';
+import { SpineModelLibrary, BatchImportResult } from '../model/SpineModelLibrary';
 import { SpineModelItem } from '../model/SpineModelItem';
 import { sanitizeAtlas } from '../model/AtlasSanitizer';
 import { SpineWebView, SpineBridgeProxy } from '../components/SpineWebView';
@@ -87,6 +87,8 @@ struct Index {
 
   @State models: Array<SpineModelItem> = [];
   @State importing: boolean = false;
+  /** 批量导入进度显示（"done/total"，空串表示无进度）。 */
+  @State importProgress: string = '';
   @State selectedSlot: number = 0;
   @State playing: boolean = true;
   private pausedByHide: boolean = false;
@@ -245,6 +247,7 @@ struct Index {
           mainModelId: this.mainModelId,
           subModelId: this.subModelId,
           importing: this.importing,
+          importProgress: this.importProgress,
           onImport: (): void => {
             this.importModels();
           },
@@ -583,15 +586,11 @@ struct Index {
     const base64 = this.captureChunks.join('');
     this.captureChunks = [];
     this.captureTotal = 0;
-    FrameExporter.savePng(getContext(this), base64)
-      .then((uri: string): void => {
+    FrameExporter.saveToGallery(getContext(this), base64)
+      .then((): void => {
         this.capturing = false;
         this.resumeAfterOverlay();
-        if (uri.length === 0) {
-          this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_capture_cancel') });
-        } else {
-          this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_capture_ok') });
-        }
+        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_capture_ok') });
       })
       .catch((err: BusinessError): void => {
         this.capturing = false;
@@ -609,7 +608,7 @@ struct Index {
     const docPicker = new picker.DocumentViewPicker(getContext(this));
     const options = new picker.DocumentSelectOptions();
     options.fileSuffixFilters = ['.zip'];
-    options.maxSelectNumber = 1;
+    options.maxSelectNumber = 500;
     let uris: Array<string> = [];
     try {
       uris = await docPicker.select(options);
@@ -621,11 +620,11 @@ struct Index {
     if (uris.length === 0) {
       return;
     }
-    this.pickImportGroup(uris[0]);
+    this.pickImportGroup(uris);
   }
 
-  /** 导入前选择分组（记忆上次选择），确定后执行导入。 */
-  private pickImportGroup(zipUri: string): void {
+  /** 导入前选择分组（记忆上次选择，整批仅弹一次），确定后执行批量导入。 */
+  private pickImportGroup(zipUris: Array<string>): void {
     const library = this.library;
     const prefs = this.prefs;
     if (library === null || prefs === null) {
@@ -638,7 +637,7 @@ struct Index {
         confirm: (group: string): void => {
           prefs.putString(PrefsKeys.LAST_IMPORT_GROUP, group);
           prefs.flush();
-          this.runImport(zipUri, group);
+          this.runBatchImport(zipUris, group);
         }
       }),
       autoCancel: true
@@ -646,18 +645,30 @@ struct Index {
     this.groupPickerController.open();
   }
 
-  private async runImport(zipUri: string, group: string): Promise<void> {
+  private async runBatchImport(zipUris: Array<string>, fallbackGroup: string): Promise<void> {
     const library = this.library;
     if (library === null) {
       return;
     }
     this.importing = true;
+    this.importProgress = '';
     try {
-      const imported = await library.importZip(zipUri, group);
+      const result: BatchImportResult = await library.importBatch(zipUris, fallbackGroup,
+        (done: number, total: number): void => {
+          this.importProgress = `${done}/${total}`;
+        });
       this.models = library.getModels();
-      this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_import_ok') });
-      if (this.mainModelId.length === 0 && imported.length > 0) {
-        this.applyModelSelection(0, imported[0].id);
+      if (result.failedZips.length === 0) {
+        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_import_ok') });
+      } else if (result.importedCount > 0) {
+        this.getUIContext().getPromptAction().showToast({
+          message: `成功 ${result.importedCount} 个，失败 ${result.failedZips.length} 个：${result.failedZips.join('、')}`
+        });
+      } else {
+        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_import_fail') });
+      }
+      if (this.mainModelId.length === 0 && result.firstImportedId.length > 0) {
+        this.applyModelSelection(0, result.firstImportedId);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : '';
@@ -666,6 +677,7 @@ struct Index {
       });
     } finally {
       this.importing = false;
+      this.importProgress = '';
     }
   }
 

@@ -47,6 +47,20 @@ interface SkeletonPeekRaw {
   skins?: Record<string, Object>;
 }
 
+/** 批量导入结果汇总。 */
+export class BatchImportResult {
+  importedCount: number = 0;
+  firstImportedId: string = '';
+  failedZips: Array<string> = new Array<string>();
+}
+
+/** ZIP 解压暂存（stageZip 产物，供 importStaged 消费）。 */
+class ZipStage {
+  stagingDir: string = '';
+  zipTmpPath: string = '';
+  skelFiles: Array<string> = new Array<string>();
+}
+
 /** 模型库单例。 */
 export class SpineModelLibrary {
   private static instance: SpineModelLibrary | null = null;
@@ -130,37 +144,70 @@ export class SpineModelLibrary {
   }
 
   /**
-   * 从选取的 ZIP URI 导入一个或多个模型（一个 ZIP 可含多角色）。
-   * 失败抛 Error（message 为可读中文），staging 一定被清理。
+   * 批量导入多个 ZIP：单模型 ZIP 归入 fallbackGroup；含 ≥2 个模型的 ZIP
+   * 自动以 ZIP 显示名建组。单 ZIP 失败仅记录，不中断整批。
    */
-  async importZip(zipUri: string, group: string): Promise<Array<SpineModelItem>> {
+  async importBatch(zipUris: Array<string>, fallbackGroup: string,
+    onProgress: (done: number, total: number) => void): Promise<BatchImportResult> {
+    const result = new BatchImportResult();
+    const total = zipUris.length;
+    for (let i = 0; i < total; i++) {
+      const uri = zipUris[i];
+      let stage: ZipStage | null = null;
+      try {
+        stage = await this.stageZip(uri);
+        const group = stage.skelFiles.length >= 2 ? zipDisplayName(uri) : fallbackGroup;
+        const imported = await this.importStaged(stage, group);
+        result.importedCount += imported.length;
+        if (result.firstImportedId === '' && imported.length > 0) {
+          result.firstImportedId = imported[0].id;
+        }
+      } catch (err) {
+        console.error(`${TAG} importBatch zip failed: ${JSON.stringify(err)}`);
+        result.failedZips.push(zipDisplayName(uri));
+      } finally {
+        if (stage !== null) {
+          this.cleanupTemp(stage.stagingDir, stage.zipTmpPath);
+        }
+      }
+      onProgress(i + 1, total);
+    }
+    return result;
+  }
+
+  /**
+   * ZIP 解压暂存：复制 → 解压 → 收集骨架 → 同目录 basename 去重。
+   * 失败抛 Error（message 为可读中文），失败路径自行清理临时产物。
+   */
+  private async stageZip(zipUri: string): Promise<ZipStage> {
     const uuid = util.generateRandomUUID(false);
-    const stagingDir = `${this.cacheDir}/zip_staging_${uuid}`;
-    const zipTmpPath = `${this.cacheDir}/import_${uuid}.zip`;
-    fileIo.mkdirSync(stagingDir);
+    const stage = new ZipStage();
+    stage.stagingDir = `${this.cacheDir}/zip_staging_${uuid}`;
+    stage.zipTmpPath = `${this.cacheDir}/import_${uuid}.zip`;
+    fileIo.mkdirSync(stage.stagingDir);
 
     let extractedCount = 0;
     try {
       const srcFile = fileIo.openSync(zipUri, fileIo.OpenMode.READ_ONLY);
       try {
-        await fileIo.copyFile(srcFile.fd, zipTmpPath);
+        await fileIo.copyFile(srcFile.fd, stage.zipTmpPath);
       } finally {
         fileIo.closeSync(srcFile);
       }
-      await zlib.decompressFile(zipTmpPath, stagingDir);
-      extractedCount = collectFilesRecursive(stagingDir).length;
+      await zlib.decompressFile(stage.zipTmpPath, stage.stagingDir);
+      extractedCount = collectFilesRecursive(stage.stagingDir).length;
     } catch (err) {
-      this.cleanupTemp(stagingDir, zipTmpPath);
+      this.cleanupTemp(stage.stagingDir, stage.zipTmpPath);
       throw new Error(`无法解压所选 ZIP 文件，请确认选择的是有效的 Spine 2D ZIP 压缩包：${JSON.stringify(err)}`);
     }
 
     if (extractedCount === 0) {
-      this.cleanupTemp(stagingDir, zipTmpPath);
+      this.cleanupTemp(stage.stagingDir, stage.zipTmpPath);
       throw new Error('无法从所选 ZIP 文件解压内容，请确认选择的是有效的 Spine 2D ZIP 压缩包');
     }
 
     // 收集骨架候选文件
-    const allFiles = collectFilesRecursive(stagingDir);
+    const allFiles = collectFilesRecursive(stage.stagingDir);
     const skelFiles = new Array<string>();
     for (const file of allFiles) {
       if (isSkelCandidate(file)) {
@@ -168,28 +215,32 @@ export class SpineModelLibrary {
       }
     }
     if (skelFiles.length === 0) {
-      this.cleanupTemp(stagingDir, zipTmpPath);
+      this.cleanupTemp(stage.stagingDir, stage.zipTmpPath);
       throw new Error('压缩包内未找到 Spine .skel / .json 骨骼数据文件');
     }
 
     // 同目录同 basename 视为同一模型，去重后仅导入一次（优先 .skel 二进制）
-    const uniqueSkelFiles = dedupeSkelFiles(skelFiles);
+    stage.skelFiles = dedupeSkelFiles(skelFiles);
+    return stage;
+  }
 
+  /**
+   * 导入暂存产物（一个 ZIP 可含多角色），合并进索引：新模型置于列表头。
+   * 全部失败抛 Error；临时产物由调用方（importBatch finally）清理。
+   */
+  private async importStaged(stage: ZipStage, group: string): Promise<Array<SpineModelItem>> {
     const imported = new Array<SpineModelItem>();
-    for (const skelFullPath of uniqueSkelFiles) {
-      const item = await this.importOneModel(skelFullPath, stagingDir, group);
+    for (const skelFullPath of stage.skelFiles) {
+      const item = await this.importOneModel(skelFullPath, stage.stagingDir, group);
       if (item !== null) {
         imported.push(item);
       }
     }
 
-    this.cleanupTemp(stagingDir, zipTmpPath);
-
     if (imported.length === 0) {
       throw new Error('模型导入失败：未能从压缩包中提取出有效的 Spine 模型');
     }
 
-    // 合并进索引：新模型置于列表头
     const incomingIds = new Set<string>();
     for (const item of imported) {
       incomingIds.add(item.id);
@@ -569,6 +620,27 @@ export class SpineModelLibrary {
 }
 
 // ==================== 文件系统辅助（模块级具名函数） ====================
+
+/** ZIP URI 的显示名：末段 → URL 解码 → 去 .zip → 截断 48 字符；空回退 'import'。 */
+function zipDisplayName(uri: string): string {
+  const idx = uri.lastIndexOf('/');
+  let name = idx >= 0 ? uri.substring(idx + 1) : uri;
+  try {
+    name = decodeURIComponent(name);
+  } catch (err) {
+    // 解码失败保留原文
+  }
+  if (name.toLowerCase().endsWith('.zip')) {
+    name = name.substring(0, name.length - '.zip'.length);
+  }
+  if (name.length > 48) {
+    name = name.substring(0, 48);
+  }
+  if (name.trim().length === 0) {
+    return 'import';
+  }
+  return name;
+}
 
 /** 递归收集目录下全部文件（绝对路径）。 */
 function collectFilesRecursive(rootDir: string): Array<string> {

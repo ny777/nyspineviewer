@@ -29,6 +29,10 @@
       "value": "导入中…"
     },
     {
+      "name": "importing_progress",
+      "value": "导入中 %s"
+    },
+    {
       "name": "empty_library_title",
       "value": "暂无模型"
     },
@@ -57,6 +61,14 @@
       "value": "副模型"
     },
     {
+      "name": "slot_main_short",
+      "value": "主"
+    },
+    {
+      "name": "slot_sub_short",
+      "value": "副"
+    },
+    {
       "name": "play",
       "value": "播放"
     },
@@ -66,11 +78,11 @@
     },
     {
       "name": "capture",
-      "value": "截帧保存"
+      "value": "截图"
     },
     {
       "name": "reset_transform",
-      "value": "重置变换"
+      "value": "重置"
     },
     {
       "name": "bg_color",
@@ -150,15 +162,11 @@
     },
     {
       "name": "toast_capture_ok",
-      "value": "截帧已保存"
+      "value": "截图已保存至图库"
     },
     {
       "name": "toast_capture_fail",
-      "value": "截帧失败"
-    },
-    {
-      "name": "toast_capture_cancel",
-      "value": "已取消保存"
+      "value": "截图失败"
     },
     {
       "name": "toast_transform_reset",

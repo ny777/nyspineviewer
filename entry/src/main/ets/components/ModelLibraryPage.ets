@@ -22,6 +22,8 @@ export struct ModelLibraryPage {
   @Prop mainModelId: string = '';
   @Prop subModelId: string = '';
   @Prop importing: boolean = false;
+  /** 批量导入进度（"done/total"，空串表示无进度）。 */
+  @Prop importProgress: string = '';
   onImport: () => void = () => {
   };
   onSelectMain: (modelId: string) => void = (modelId: string) => {
@@ -93,7 +95,11 @@ export struct ModelLibraryPage {
         .fontColor(this.theme().text)
         .width('100%')
 
-      Button(this.importing ? $r('app.string.importing') : $r('app.string.import_model'))
+      Button(this.importing
+        ? (this.importProgress.length > 0
+          ? $r('app.string.importing_progress', this.importProgress)
+          : $r('app.string.importing'))
+        : $r('app.string.import_model'))
         .width('100%')
         .backgroundColor(this.theme().importBtn)
         .fontColor(Color.White)
