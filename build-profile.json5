@@ -1,6 +1,20 @@
 {
   "app": {
-    "signingConfigs": [],
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\方方\\.ohos\\config\\default_app_zHVrkHDMUo1qXCnl0zQsq1Nl6rnT6twEbgaTBhIE1Y=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001bfb526f34c777f3728a90fd7d6a470877af6f8d1c8834b1ca855bad0e434eeb68c7f45541abac63",
+          "profile": "C:\\Users\\方方\\.ohos\\config\\default_app_zHVrkHDMUo1qXCnl0zQsq1Nl6rnT6twEbgaTBhIE1Y=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\方方\\.ohos\\config\\default_app_zHVrkHDMUo1qXCnl0zQsq1Nl6rnT6twEbgaTBhIE1Y=.p12",
+          "storePassword": "0000001bfb526f34c777f3728a90fd7d6a470877af6f8d1c8834b1ca855bad0e434eeb68c7f45541abac63"
+        }
+      }
+    ],
     "products": [
       {
         "name": "default",
