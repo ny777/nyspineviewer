@@ -38,18 +38,35 @@ export struct ModelLibraryPage {
   };
   onDeleteGroup: (group: string) => void = (group: string) => {
   };
+  onRenameGroup: (group: string) => void = (group: string) => {
+  };
   @State collapsedGroups: Array<string> = [];
+  /** 库内搜索关键字（名称/分组/版本/动画 substring 过滤）。 */
+  @State searchQuery: string = '';
   @StorageProp('themeDark') themeDark: boolean = true;
 
   private theme(): ThemeColors {
     return getTheme(this.themeDark);
   }
 
+  /** 搜索过滤：名称/分组/版本/动画任一 substring 命中（大小写不敏感）。 */
+  private filteredModels(): Array<SpineModelItem> {
+    const q = this.searchQuery.trim().toLowerCase();
+    if (q.length === 0) {
+      return this.models;
+    }
+    return this.models.filter((m: SpineModelItem): boolean =>
+      m.name.toLowerCase().includes(q) ||
+      m.group.toLowerCase().includes(q) ||
+      m.version.toLowerCase().includes(q) ||
+      m.animations.some((a: string): boolean => a.toLowerCase().includes(q)));
+  }
+
   /** 由模型列表派生分组视图：未分组置顶，其余按首现顺序。 */
   private buildGroups(): Array<ModelGroup> {
     let ungrouped: ModelGroup | null = null;
     const named = new Map<string, ModelGroup>();
-    for (const m of this.models) {
+    for (const m of this.filteredModels()) {
       if (m.group.length === 0) {
         if (ungrouped === null) {
           ungrouped = new ModelGroup('', new Array<SpineModelItem>());
@@ -97,19 +114,60 @@ export struct ModelLibraryPage {
 
       Button(this.importing
         ? (this.importProgress.length > 0
-          ? $r('app.string.importing_progress', this.importProgress)
-          : $r('app.string.importing'))
+          ? $r('app.string.cancel_import_progress', this.importProgress)
+          : $r('app.string.btn_cancel_import'))
         : $r('app.string.import_model'))
         .width('100%')
-        .backgroundColor(this.theme().importBtn)
+        .backgroundColor(this.importing ? this.theme().danger : this.theme().importBtn)
         .fontColor(Color.White)
-        .enabled(!this.importing)
         .onClick(() => {
           this.onImport();
         })
 
+      if (this.models.length > 0) {
+        Row({ space: 8 }) {
+          TextInput({ text: this.searchQuery, placeholder: $r('app.string.search_hint') })
+            .layoutWeight(1)
+            .height(38)
+            .fontSize(13)
+            .fontColor(this.theme().text)
+            .backgroundColor(this.theme().chip)
+            .padding({ left: 12, right: 12 })
+            .onChange((value: string) => {
+              this.searchQuery = value;
+            })
+          if (this.searchQuery.length > 0) {
+            Button() {
+              SymbolGlyph($r('sys.symbol.xmark'))
+                .fontSize(14)
+                .fontColor([this.theme().textSecondary])
+            }
+            .width(38)
+            .height(38)
+            .borderRadius(19)
+            .backgroundColor(this.theme().chip)
+            .padding(0)
+            .accessibilityText($r('app.string.search_clear'))
+            .onClick(() => {
+              this.searchQuery = '';
+            })
+          }
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+      }
+
       if (this.models.length === 0) {
         this.EmptyGuide()
+      } else if (this.searchQuery.trim().length > 0 && this.filteredModels().length === 0) {
+        Column() {
+          Text($r('app.string.search_empty'))
+            .fontSize(14)
+            .fontColor(this.theme().textMuted)
+        }
+        .justifyContent(FlexAlign.Center)
+        .layoutWeight(1)
+        .width('100%')
       } else {
         List({ space: 10 }) {
           ForEach(this.buildGroups(), (group: ModelGroup) => {
@@ -202,6 +260,12 @@ export struct ModelLibraryPage {
           .width(24)
           .textAlign(TextAlign.Center)
           .bindMenu([
+            {
+              value: $r('app.string.menu_rename_group'),
+              action: (): void => {
+                this.onRenameGroup(group.name);
+              }
+            },
             {
               value: $r('app.string.menu_dissolve_group'),
               action: (): void => {
