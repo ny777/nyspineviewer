@@ -137,16 +137,53 @@ export class WidgetSnapshotData {
 
 /** 组装快照数据并推送刷新。 */
 export class WidgetUpdater {
-  /** 组装卡片数据：有快照 → formImages fd 引用（fd 保持打开，由调用方在更新落定后关闭）；
-   * 无快照 → 空数据（卡片显示占位 UI）。 */
+  /** 上一代推送的 fd：渲染服务可能延迟到卡片可见时才读取图片，
+   * 因此本代 fd 保持打开，直到下一代推送前才统一关闭（每代至多 formIds 数量个）。 */
+  private static pendingFds: number[] = [];
+
+  /** 关闭上一代推送遗留的 fd。 */
+  private static closePendingFds(): void {
+    for (const fd of WidgetUpdater.pendingFds) {
+      try {
+        fileIo.closeSync(fd);
+      } catch (err) {
+        // fd 已失效可忽略
+      }
+    }
+    WidgetUpdater.pendingFds = [];
+  }
+
+  /** 记录本代 fd，延迟到下一代推送时关闭。 */
+  private static holdFd(fd: number): void {
+    if (fd >= 0) {
+      WidgetUpdater.pendingFds.push(fd);
+    }
+  }
+
+  /** 立即关闭 fd（推送失败时调用，避免泄漏）。 */
+  private static closeFd(fd: number): void {
+    if (fd >= 0) {
+      try {
+        fileIo.closeSync(fd);
+      } catch (err) {
+        // fd 已失效可忽略
+      }
+    }
+  }
+
+  /** 组装卡片数据：有快照 → formImages fd 引用（fd 保持打开，由调用方管理生命周期）；
+   * 无快照 → 空数据（卡片显示占位 UI）。
+   * 每次构建使用唯一 image key，避免渲染服务按 key 去重导致图片不刷新。 */
   static buildSnapshotData(context: Context): WidgetSnapshotData {
     if (WidgetSnapshotStore.hasSnapshot(context)) {
       const title = WidgetSnapshotStore.readTitle(context);
+      const imgKey = `snapshot_${Date.now()}`;
       const file = fileIo.openSync(WidgetSnapshotStore.snapshotPath(context), fileIo.OpenMode.READ_ONLY);
-      const formImages: Record<string, number> = { 'snapshot': file.fd };
+      const formImages: Record<string, number> = {};
+      formImages[imgKey] = file.fd;
       const data: Record<string, Object> = {
         'title': title,
-        'imgSrc': 'memory://snapshot',
+        'imgSrc': `memory://${imgKey}`,
         'formImages': formImages
       };
       return new WidgetSnapshotData(formBindingData.createFormBindingData(data), file.fd);
@@ -158,22 +195,21 @@ export class WidgetUpdater {
   /** 刷新全部已登记卡片；返回成功数。单个失败仅记录日志并继续。 */
   static async updateAll(context: Context): Promise<number> {
     const formIds = WidgetFormsStore.readFormIds(context);
+    if (formIds.length === 0) {
+      return 0;
+    }
+    // 关闭上一代 fd：本代推送成功后渲染服务只会消费最新数据，旧 fd 不再需要
+    WidgetUpdater.closePendingFds();
     let successCount = 0;
     for (const formId of formIds) {
       const data = WidgetUpdater.buildSnapshotData(context);
       try {
         await formProvider.updateForm(formId, data.formData);
         successCount++;
+        WidgetUpdater.holdFd(data.fd);
       } catch (err) {
         console.error(`${TAG} updateForm ${formId} failed: ${JSON.stringify(err)}`);
-      } finally {
-        if (data.fd >= 0) {
-          try {
-            fileIo.closeSync(data.fd);
-          } catch (err) {
-            // fd 已失效可忽略
-          }
-        }
+        WidgetUpdater.closeFd(data.fd);
       }
     }
     return successCount;
@@ -181,16 +217,17 @@ export class WidgetUpdater {
 
   /** 刷新单张卡片（EntryFormAbility 刷新消息用）；失败向上抛出由调用方记录。 */
   static async updateFormById(context: Context, formId: string): Promise<void> {
+    WidgetUpdater.closePendingFds();
     const data = WidgetUpdater.buildSnapshotData(context);
+    let pushed = false;
     try {
       await formProvider.updateForm(formId, data.formData);
+      pushed = true;
     } finally {
-      if (data.fd >= 0) {
-        try {
-          fileIo.closeSync(data.fd);
-        } catch (err) {
-          // fd 已失效可忽略
-        }
+      if (pushed) {
+        WidgetUpdater.holdFd(data.fd);
+      } else {
+        WidgetUpdater.closeFd(data.fd);
       }
     }
   }
