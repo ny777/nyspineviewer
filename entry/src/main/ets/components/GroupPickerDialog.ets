@@ -3,6 +3,8 @@
  * 用于导入时选组与单卡「移动到分组」；确定回调返回所选分组名（'' = 未分组，
  * 输入了新名称则优先返回新名称）。
  */
+import { getTheme, ThemeColors } from '../core/Theme';
+
 @CustomDialog
 export struct GroupPickerDialog {
   controller?: CustomDialogController;
@@ -12,6 +14,11 @@ export struct GroupPickerDialog {
   };
   @State selected: string = '';
   @State newGroupName: string = '';
+  @StorageProp('themeDark') themeDark: boolean = true;
+
+  private theme(): ThemeColors {
+    return getTheme(this.themeDark);
+  }
 
   aboutToAppear(): void {
     this.selected = this.initialGroup;
@@ -22,7 +29,7 @@ export struct GroupPickerDialog {
       Text($r('app.string.group_picker_title'))
         .fontSize(16)
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(this.theme().text)
         .width('100%')
 
       Scroll() {
@@ -42,8 +49,8 @@ export struct GroupPickerDialog {
       TextInput({ placeholder: $r('app.string.group_new_hint'), text: this.newGroupName })
         .width('100%')
         .fontSize(14)
-        .fontColor($r('app.color.text_primary'))
-        .backgroundColor($r('app.color.chip_bg'))
+        .fontColor(this.theme().text)
+        .backgroundColor(this.theme().chip)
         .onChange((value: string) => {
           this.newGroupName = value;
           if (value.trim().length > 0) {
@@ -54,14 +61,14 @@ export struct GroupPickerDialog {
       Row({ space: 12 }) {
         Button($r('app.string.dialog_cancel'))
           .layoutWeight(1)
-          .backgroundColor($r('app.color.chip_bg'))
-          .fontColor($r('app.color.text_secondary'))
+          .backgroundColor(this.theme().chip)
+          .fontColor(this.theme().textSecondary)
           .onClick(() => {
             this.controller?.close();
           })
         Button($r('app.string.dialog_ok'))
           .layoutWeight(1)
-          .backgroundColor($r('app.color.primary'))
+          .backgroundColor(this.theme().accent)
           .fontColor(Color.White)
           .onClick(() => {
             const typed = this.newGroupName.trim();
@@ -74,7 +81,7 @@ export struct GroupPickerDialog {
     }
     .padding(20)
     .width('90%')
-    .backgroundColor($r('app.color.panel_bg'))
+    .backgroundColor(this.theme().dialogBg)
     .borderRadius(16)
   }
 
@@ -93,7 +100,7 @@ export struct GroupPickerDialog {
         })
       Text(label)
         .fontSize(14)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(this.theme().text)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)

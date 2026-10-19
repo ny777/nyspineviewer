@@ -9,6 +9,7 @@ import { Context } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { PrefsManager, PrefsKeys, SlotPrefs } from '../core/PrefsManager';
+import { getTheme, ThemeColors } from '../core/Theme';
 import {
   BridgeCmdNames,
   BridgeCommand,
@@ -89,6 +90,17 @@ struct Index {
   @State mainModelId: string = '';
   @State subModelId: string = '';
   @State slotUi: Array<SlotUiState> = [new SlotUiState(), new SlotUiState()];
+  @StorageProp('themeDark') themeDark: boolean = true;
+
+  private theme(): ThemeColors {
+    return getTheme(this.themeDark);
+  }
+
+  /** 切换深浅主题并持久化（theme_mode: dark / light）。 */
+  private setThemeDark(dark: boolean): void {
+    AppStorage.setOrCreate('themeDark', dark);
+    this.prefs?.putString(PrefsKeys.THEME_MODE, dark ? 'dark' : 'light');
+  }
 
   async aboutToAppear(): Promise<void> {
     const context: Context = getContext(this);
@@ -126,6 +138,7 @@ struct Index {
     this.fps = clampInt(prefs.getNumber(PrefsKeys.TARGET_FPS, 60), 15, 120);
     this.bgColor = intColorToHex(prefs.getNumber(PrefsKeys.BG_COLOR, PrefsManager.defaultBgColor));
     this.bgImageName = prefs.getString(PrefsKeys.BG_IMAGE_PATH, '');
+    AppStorage.setOrCreate('themeDark', prefs.getString(PrefsKeys.THEME_MODE, 'dark') !== 'light');
     this.initSlotUi(0);
     this.initSlotUi(1);
   }
@@ -265,6 +278,9 @@ struct Index {
         },
         onClose: (): void => {
           this.drawerOpen = false;
+        },
+        onToggleTheme: (dark: boolean): void => {
+          this.setThemeDark(dark);
         }
       })
       .width(DRAWER_WIDTH)
@@ -276,7 +292,7 @@ struct Index {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_bg'))
+    .backgroundColor(this.theme().pageBg)
   }
 
   // ==================== Web 就绪与命令发送 ====================
@@ -665,7 +681,7 @@ struct Index {
       },
       secondaryButton: {
         value: $r('app.string.dialog_delete'),
-        fontColor: $r('app.color.danger'),
+        fontColor: this.theme().danger,
         action: (): void => {
           this.performDelete(modelId);
         }

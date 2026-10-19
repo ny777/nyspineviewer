@@ -3,6 +3,8 @@
  * （版本/格式徽章、分组快捷移动）、设为主/副模型、删除、空库三步引导卡。
  */
 import { SpineModelItem } from '../model/SpineModelItem';
+import { getTheme, ThemeColors } from '../core/Theme';
+import { VersionInfoDialog } from './VersionInfoDialog';
 
 /** 抽屉渲染用分组视图（'' = 未分组，置顶）。 */
 export class ModelGroup {
@@ -37,7 +39,19 @@ export struct ModelDrawer {
   };
   onClose: () => void = () => {
   };
+  onToggleTheme: (dark: boolean) => void = (dark: boolean) => {
+  };
   @State collapsedGroups: Array<string> = [];
+  @StorageProp('themeDark') themeDark: boolean = true;
+  private versionInfoController: CustomDialogController = new CustomDialogController({
+    builder: VersionInfoDialog({}),
+    autoCancel: true,
+    customStyle: true
+  });
+
+  private theme(): ThemeColors {
+    return getTheme(this.themeDark);
+  }
 
   /** 由模型列表派生分组视图：未分组置顶，其余按首现顺序。 */
   private buildGroups(): Array<ModelGroup> {
@@ -87,11 +101,11 @@ export struct ModelDrawer {
         Text($r('app.string.drawer_title'))
           .fontSize(18)
           .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(this.theme().text)
           .layoutWeight(1)
         Text('✕')
           .fontSize(18)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(this.theme().textSecondary)
           .padding(8)
           .onClick(() => {
             this.onClose();
@@ -101,7 +115,7 @@ export struct ModelDrawer {
 
       Button(this.importing ? $r('app.string.importing') : $r('app.string.import_model'))
         .width('100%')
-        .backgroundColor($r('app.color.primary'))
+        .backgroundColor(this.theme().importBtn)
         .fontColor(Color.White)
         .enabled(!this.importing)
         .onClick(() => {
@@ -131,11 +145,45 @@ export struct ModelDrawer {
         .scrollBar(BarState.Auto)
         .edgeEffect(EdgeEffect.Spring)
       }
+
+      Divider()
+        .color(this.theme().divider)
+        .width('100%')
+
+      Row({ space: 8 }) {
+        Text($r('app.string.theme_dark_label'))
+          .fontSize(13)
+          .fontColor(this.theme().textSecondary)
+          .layoutWeight(1)
+        Toggle({ type: ToggleType.Switch, isOn: this.themeDark })
+          .onChange((isOn: boolean) => {
+            this.onToggleTheme(isOn);
+          })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Row({ space: 8 }) {
+        Text($r('app.string.version_info_entry'))
+          .fontSize(13)
+          .fontColor(this.theme().textSecondary)
+          .layoutWeight(1)
+        Text('ℹ')
+          .fontSize(14)
+          .fontColor(this.theme().accentSoft)
+          .width(24)
+          .textAlign(TextAlign.Center)
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .onClick(() => {
+        this.versionInfoController.open();
+      })
     }
     .width('100%')
     .height('100%')
     .padding(16)
-    .backgroundColor($r('app.color.panel_bg'))
+    .backgroundColor(this.theme().drawerBg)
   }
 
   /** 空库三步引导卡（功能 9）：标题 + 三步说明 + 大号导入按钮。 */
@@ -146,7 +194,7 @@ export struct ModelDrawer {
         Text($r('app.string.empty_guide_title'))
           .fontSize(16)
           .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
+          .fontColor(this.theme().text)
           .textAlign(TextAlign.Center)
         Column({ space: 8 }) {
           Text($r('app.string.empty_guide_step1'))
@@ -157,7 +205,7 @@ export struct ModelDrawer {
         .width('100%')
         .padding(14)
         .borderRadius(12)
-        .backgroundColor($r('app.color.card_bg'))
+        .backgroundColor(this.theme().card)
       }
       .alignItems(HorizontalAlign.Center)
 
@@ -165,7 +213,7 @@ export struct ModelDrawer {
         .width('100%')
         .height(44)
         .fontSize(15)
-        .backgroundColor($r('app.color.primary'))
+        .backgroundColor(this.theme().importBtn)
         .fontColor(Color.White)
         .onClick(() => {
           this.onImport();
@@ -182,25 +230,25 @@ export struct ModelDrawer {
     Row({ space: 8 }) {
       Text(this.isCollapsed(group.name) ? '▸' : '▾')
         .fontSize(12)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(this.theme().textSecondary)
         .width(16)
       Text(group.name.length === 0 ? $r('app.string.group_ungrouped') : group.name)
         .fontSize(13)
         .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_secondary'))
+        .fontColor(this.theme().textSecondary)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
       Text(`${group.models.length}`)
         .fontSize(11)
-        .fontColor($r('app.color.badge_text'))
-        .backgroundColor($r('app.color.badge_bg'))
+        .fontColor(this.theme().badgeText)
+        .backgroundColor(this.theme().badgeBg)
         .padding({ left: 8, right: 8, top: 2, bottom: 2 })
         .borderRadius(8)
       if (group.name.length > 0) {
         Text('⋮')
           .fontSize(16)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(this.theme().textSecondary)
           .width(24)
           .textAlign(TextAlign.Center)
           .bindMenu([
@@ -234,34 +282,34 @@ export struct ModelDrawer {
           Text(model.name)
             .fontSize(15)
             .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.text_primary'))
+            .fontColor(this.theme().text)
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
           Row({ space: 6 }) {
             Text(model.version)
               .fontSize(10)
-              .fontColor($r('app.color.badge_text'))
-              .backgroundColor($r('app.color.badge_bg'))
+              .fontColor(this.theme().badgeText)
+              .backgroundColor(this.theme().badgeBg)
               .padding({ left: 6, right: 6, top: 2, bottom: 2 })
               .borderRadius(4)
             Text(model.format)
               .fontSize(10)
-              .fontColor($r('app.color.badge_text'))
-              .backgroundColor($r('app.color.badge_bg'))
+              .fontColor(this.theme().badgeText)
+              .backgroundColor(this.theme().badgeBg)
               .padding({ left: 6, right: 6, top: 2, bottom: 2 })
               .borderRadius(4)
             if (!model.isSupported()) {
               Text($r('app.string.badge_unsupported'))
                 .fontSize(10)
-                .fontColor($r('app.color.badge_warn_text'))
-                .backgroundColor($r('app.color.badge_warn_bg'))
+                .fontColor(this.theme().badgeWarnText)
+                .backgroundColor(this.theme().badgeWarnBg)
                 .padding({ left: 6, right: 6, top: 2, bottom: 2 })
                 .borderRadius(4)
             }
             Text(model.group.length > 0 ? model.group : $r('app.string.group_ungrouped'))
               .fontSize(10)
-              .fontColor($r('app.color.text_secondary'))
-              .backgroundColor($r('app.color.chip_bg'))
+              .fontColor(this.theme().textSecondary)
+              .backgroundColor(this.theme().chip)
               .padding({ left: 6, right: 6, top: 2, bottom: 2 })
               .borderRadius(4)
               .maxLines(1)
@@ -278,7 +326,7 @@ export struct ModelDrawer {
 
         Text('✕')
           .fontSize(16)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(this.theme().textSecondary)
           .padding(6)
           .onClick(() => {
             this.onDelete(model.id);
@@ -292,8 +340,8 @@ export struct ModelDrawer {
           .layoutWeight(1)
           .fontSize(12)
           .height(32)
-          .backgroundColor(model.id === this.mainModelId ? $r('app.color.primary') : $r('app.color.chip_bg'))
-          .fontColor(model.id === this.mainModelId ? Color.White : $r('app.color.text_secondary'))
+          .backgroundColor(model.id === this.mainModelId ? this.theme().cardSelected : this.theme().chip)
+          .fontColor(model.id === this.mainModelId ? Color.White : this.theme().textSecondary)
           .onClick(() => {
             this.onSelectMain(model.id);
           })
@@ -301,8 +349,8 @@ export struct ModelDrawer {
           .layoutWeight(1)
           .fontSize(12)
           .height(32)
-          .backgroundColor(model.id === this.subModelId ? $r('app.color.primary') : $r('app.color.chip_bg'))
-          .fontColor(model.id === this.subModelId ? Color.White : $r('app.color.text_secondary'))
+          .backgroundColor(model.id === this.subModelId ? this.theme().cardSelected : this.theme().chip)
+          .fontColor(model.id === this.subModelId ? Color.White : this.theme().textSecondary)
           .onClick(() => {
             this.onSelectSub(model.id);
           })
@@ -311,7 +359,7 @@ export struct ModelDrawer {
     }
     .padding(12)
     .borderRadius(12)
-    .backgroundColor($r('app.color.card_bg'))
+    .backgroundColor(this.theme().card)
     .width('100%')
   }
 }

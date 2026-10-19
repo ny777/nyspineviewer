@@ -2,6 +2,8 @@
  * 底部播放控制条：槽位切换 / 播放暂停 / 截帧 / 重置变换 / 背景色 /
  * 动画菜单 / PMA / 帧率 / 皮肤多选。全部为受控组件，状态与持久化由父页面持有。
  */
+import { getTheme, ThemeColors } from '../core/Theme';
+
 @Component
 export struct ControlBar {
   @Prop slot: number = 0;
@@ -13,6 +15,7 @@ export struct ControlBar {
   @Prop selectedSkins: Array<string> = [];
   @Prop pma: boolean = true;
   @Prop fps: number = 60;
+  @StorageProp('themeDark') themeDark: boolean = true;
 
   onSlotChange: (slot: number) => void = (slot: number) => {
   };
@@ -33,6 +36,10 @@ export struct ControlBar {
   onPickBgColor: () => void = () => {
   };
 
+  private theme(): ThemeColors {
+    return getTheme(this.themeDark);
+  }
+
   build() {
     Column({ space: 10 }) {
       // 行1：槽位 / 播放 / 截帧 / 重置变换 / 背景色
@@ -41,8 +48,8 @@ export struct ControlBar {
           Text($r('app.string.slot_main'))
             .fontSize(12)
             .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-            .backgroundColor(this.slot === 0 ? $r('app.color.primary') : $r('app.color.chip_bg'))
-            .fontColor(this.slot === 0 ? Color.White : $r('app.color.text_secondary'))
+            .backgroundColor(this.slot === 0 ? this.theme().cardSelected : this.theme().chip)
+            .fontColor(this.slot === 0 ? Color.White : this.theme().textSecondary)
             .borderRadius({ topLeft: 14, bottomLeft: 14 })
             .onClick(() => {
               this.onSlotChange(0);
@@ -50,8 +57,8 @@ export struct ControlBar {
           Text($r('app.string.slot_sub'))
             .fontSize(12)
             .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-            .backgroundColor(this.slot === 1 ? $r('app.color.primary') : $r('app.color.chip_bg'))
-            .fontColor(this.slot === 1 ? Color.White : $r('app.color.text_secondary'))
+            .backgroundColor(this.slot === 1 ? this.theme().cardSelected : this.theme().chip)
+            .fontColor(this.slot === 1 ? Color.White : this.theme().textSecondary)
             .borderRadius({ topRight: 14, bottomRight: 14 })
             .onClick(() => {
               this.onSlotChange(1);
@@ -63,8 +70,8 @@ export struct ControlBar {
           .fontSize(12)
           .height(30)
           .padding({ left: 10, right: 10 })
-          .backgroundColor($r('app.color.chip_bg'))
-          .fontColor($r('app.color.text_primary'))
+          .backgroundColor(this.theme().chip)
+          .fontColor(this.theme().text)
           .onClick(() => {
             this.onTogglePlay();
           })
@@ -73,7 +80,7 @@ export struct ControlBar {
           .fontSize(12)
           .height(30)
           .padding({ left: 10, right: 10 })
-          .backgroundColor($r('app.color.primary'))
+          .backgroundColor(this.theme().accent)
           .fontColor(Color.White)
           .enabled(!this.capturing)
           .onClick(() => {
@@ -84,8 +91,8 @@ export struct ControlBar {
           .fontSize(12)
           .height(30)
           .padding({ left: 10, right: 10 })
-          .backgroundColor($r('app.color.chip_bg'))
-          .fontColor($r('app.color.text_primary'))
+          .backgroundColor(this.theme().chip)
+          .fontColor(this.theme().text)
           .onClick(() => {
             this.onResetTransform();
           })
@@ -94,8 +101,8 @@ export struct ControlBar {
           .fontSize(12)
           .height(30)
           .padding({ left: 10, right: 10 })
-          .backgroundColor($r('app.color.chip_bg'))
-          .fontColor($r('app.color.text_primary'))
+          .backgroundColor(this.theme().chip)
+          .fontColor(this.theme().text)
           .onClick(() => {
             this.onPickBgColor();
           })
@@ -107,7 +114,7 @@ export struct ControlBar {
       Row({ space: 10 }) {
         Text($r('app.string.animation_label'))
           .fontSize(12)
-          .fontColor($r('app.color.text_secondary'))
+          .fontColor(this.theme().textSecondary)
         Text(this.currentAnimation.length > 0 ? this.currentAnimation : $r('app.string.no_animation'))
           .fontSize(12)
           .maxLines(1)
@@ -115,13 +122,13 @@ export struct ControlBar {
           .constraintSize({ maxWidth: 140 })
           .padding({ left: 12, right: 12, top: 7, bottom: 7 })
           .borderRadius(15)
-          .backgroundColor($r('app.color.chip_bg'))
-          .fontColor($r('app.color.text_primary'))
+          .backgroundColor(this.theme().chip)
+          .fontColor(this.theme().text)
           .bindMenu(this.AnimationMenuBuilder)
         Row({ space: 6 }) {
           Text($r('app.string.pma_label'))
             .fontSize(12)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(this.theme().textSecondary)
           Toggle({ type: ToggleType.Switch, isOn: this.pma })
             .onChange((isOn: boolean) => {
               this.onPmaChange(isOn);
@@ -131,7 +138,7 @@ export struct ControlBar {
         Row({ space: 6 }) {
           Text($r('app.string.fps_label'))
             .fontSize(12)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(this.theme().textSecondary)
           Slider({ value: this.fps, min: 15, max: 120, step: 1, style: SliderStyle.OutSet })
             .layoutWeight(1)
             .onChange((value: number, mode: SliderChangeMode) => {
@@ -151,7 +158,7 @@ export struct ControlBar {
         Row({ space: 8 }) {
           Text($r('app.string.skins_label'))
             .fontSize(12)
-            .fontColor($r('app.color.text_secondary'))
+            .fontColor(this.theme().textSecondary)
           Scroll() {
             Row({ space: 8 }) {
               ForEach(this.skins, (name: string) => {
@@ -160,8 +167,8 @@ export struct ControlBar {
                   .maxLines(1)
                   .padding({ left: 12, right: 12, top: 5, bottom: 5 })
                   .borderRadius(13)
-                  .backgroundColor(this.selectedSkins.includes(name) ? $r('app.color.primary') : $r('app.color.chip_bg'))
-                  .fontColor(this.selectedSkins.includes(name) ? Color.White : $r('app.color.text_secondary'))
+                  .backgroundColor(this.selectedSkins.includes(name) ? this.theme().cardSelected : this.theme().chip)
+                  .fontColor(this.selectedSkins.includes(name) ? Color.White : this.theme().textSecondary)
                   .onClick(() => {
                     this.onSkinToggle(name);
                   })
@@ -177,7 +184,7 @@ export struct ControlBar {
       }
     }
     .padding({ left: 16, right: 16, top: 12, bottom: 16 })
-    .backgroundColor($r('app.color.bar_bg'))
+    .backgroundColor(this.theme().bottomBarBg)
     .width('100%')
   }
 

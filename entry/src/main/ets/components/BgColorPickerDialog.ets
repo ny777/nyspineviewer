@@ -1,6 +1,7 @@
 /**
  * 背景色选择弹窗（@CustomDialog）：预设色板 + 确定/取消。
  */
+import { getTheme, ThemeColors } from '../core/Theme';
 
 const BG_COLOR_PALETTE: Array<string> = [
   '#0F172A', '#0B1120', '#000000', '#1E293B',
@@ -21,6 +22,11 @@ export struct BgColorPickerDialog {
   removeImage: () => void = () => {
   };
   @State selectedColor: string = '#0F172A';
+  @StorageProp('themeDark') themeDark: boolean = true;
+
+  private theme(): ThemeColors {
+    return getTheme(this.themeDark);
+  }
 
   aboutToAppear(): void {
     this.selectedColor = this.pickedColor;
@@ -31,7 +37,7 @@ export struct BgColorPickerDialog {
       Text($r('app.string.color_title'))
         .fontSize(16)
         .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
+        .fontColor(this.theme().text)
         .width('100%')
 
       Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Center }) {
@@ -47,7 +53,7 @@ export struct BgColorPickerDialog {
                 .width(40)
                 .height(40)
                 .borderRadius(20)
-                .border({ width: 2, color: $r('app.color.primary') })
+                .border({ width: 2, color: this.theme().accent })
             }
           }
           .margin(6)
@@ -60,13 +66,13 @@ export struct BgColorPickerDialog {
 
       // 背景图操作区：颜色与图片共存（图覆盖色，移除回色），与安卓一致
       Divider()
-        .color($r('app.color.divider'))
+        .color(this.theme().divider)
         .width('100%')
 
       Button($r('app.string.btn_select_bg_image'))
         .width('100%')
-        .backgroundColor($r('app.color.chip_bg'))
-        .fontColor($r('app.color.text_primary'))
+        .backgroundColor(this.theme().chip)
+        .fontColor(this.theme().text)
         .onClick(() => {
           this.controller?.close();
           this.pickImage();
@@ -75,8 +81,8 @@ export struct BgColorPickerDialog {
       if (this.hasBgImage) {
         Button($r('app.string.btn_remove_bg_image'))
           .width('100%')
-          .backgroundColor($r('app.color.chip_bg'))
-          .fontColor($r('app.color.danger'))
+          .backgroundColor(this.theme().chip)
+          .fontColor(this.theme().danger)
           .onClick(() => {
             this.controller?.close();
             this.removeImage();
@@ -86,14 +92,14 @@ export struct BgColorPickerDialog {
       Row({ space: 12 }) {
         Button($r('app.string.dialog_cancel'))
           .layoutWeight(1)
-          .backgroundColor($r('app.color.chip_bg'))
-          .fontColor($r('app.color.text_secondary'))
+          .backgroundColor(this.theme().chip)
+          .fontColor(this.theme().textSecondary)
           .onClick(() => {
             this.controller?.close();
           })
         Button($r('app.string.dialog_ok'))
           .layoutWeight(1)
-          .backgroundColor($r('app.color.primary'))
+          .backgroundColor(this.theme().accent)
           .fontColor(Color.White)
           .onClick(() => {
             const color = this.selectedColor;
@@ -105,7 +111,7 @@ export struct BgColorPickerDialog {
     }
     .padding(20)
     .width('90%')
-    .backgroundColor($r('app.color.panel_bg'))
+    .backgroundColor(this.theme().dialogBg)
     .borderRadius(16)
   }
 }

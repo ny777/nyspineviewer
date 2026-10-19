@@ -231,6 +231,58 @@
     {
       "name": "empty_guide_btn",
       "value": "导入首个 Spine 模型 ZIP"
+    },
+    {
+      "name": "settings_section",
+      "value": "设置"
+    },
+    {
+      "name": "theme_dark_label",
+      "value": "深色主题"
+    },
+    {
+      "name": "theme_light_label",
+      "value": "浅色主题"
+    },
+    {
+      "name": "version_info_entry",
+      "value": "版本说明"
+    },
+    {
+      "name": "version_info_title",
+      "value": "版本说明"
+    },
+    {
+      "name": "version_playable_label",
+      "value": "可播放版本"
+    },
+    {
+      "name": "version_playable_value",
+      "value": "4.0 / 4.1 / 4.2"
+    },
+    {
+      "name": "version_detectable_label",
+      "value": "可检测版本"
+    },
+    {
+      "name": "version_detectable_value",
+      "value": "3.5 – 4.3（3.x 与 4.3 运行时暂未集成）"
+    },
+    {
+      "name": "version_zip_hint_title",
+      "value": "ZIP 结构建议"
+    },
+    {
+      "name": "version_zip_hint_value",
+      "value": "单个模型：.skel 或 .json + 同名 .atlas + 贴图，打包为一个 ZIP；也支持一个 ZIP 内包含多个模型。"
+    },
+    {
+      "name": "version_note",
+      "value": "模型数据仅保存在本机应用目录；播放内核基于 Spine 官方运行时，仅供个人学习使用。"
+    },
+    {
+      "name": "btn_close",
+      "value": "关闭"
     }
   ]
 }
