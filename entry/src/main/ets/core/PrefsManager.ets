@@ -30,6 +30,7 @@ export class PrefsKeys {
   static readonly BG_FAVORITES: string = 'bg_favorites';
   static readonly TARGET_FPS: string = 'target_fps';
   static readonly TAP_SWITCH_ANIMATION: string = 'tap_switch_animation';
+  static readonly WIDGET_AUTO_UPDATE: string = 'widget_auto_update';
 }
 
 const PREFS_STORE_NAME = 'spine_wallpaper_prefs';

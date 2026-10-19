@@ -101,6 +101,62 @@
       "value": "PMA"
     },
     {
+      "name": "settings_pma_main",
+      "value": "PMA（主模型）"
+    },
+    {
+      "name": "settings_pma_sub",
+      "value": "PMA（副模型）"
+    },
+    {
+      "name": "settings_tap_switch",
+      "value": "点击预览切换动画"
+    },
+    {
+      "name": "settings_tap_switch_desc",
+      "value": "关闭后点击预览区不再轮播动画"
+    },
+    {
+      "name": "model_loading",
+      "value": "模型加载中…"
+    },
+    {
+      "name": "search_hint",
+      "value": "搜索模型 / 分组 / 动画"
+    },
+    {
+      "name": "search_clear",
+      "value": "清空搜索"
+    },
+    {
+      "name": "search_empty",
+      "value": "未找到匹配的模型"
+    },
+    {
+      "name": "menu_rename_group",
+      "value": "重命名分组"
+    },
+    {
+      "name": "rename_group_title",
+      "value": "重命名分组"
+    },
+    {
+      "name": "rename_group_hint",
+      "value": "输入新的分组名"
+    },
+    {
+      "name": "toast_group_rename_exists",
+      "value": "分组名已存在或不可用"
+    },
+    {
+      "name": "btn_cancel_import",
+      "value": "取消导入"
+    },
+    {
+      "name": "cancel_import_progress",
+      "value": "取消导入 (%s)"
+    },
+    {
       "name": "fps_label",
       "value": "帧率"
     },
@@ -327,6 +383,42 @@
     {
       "name": "btn_close",
       "value": "关闭"
+    },
+    {
+      "name": "widget_label",
+      "value": "Spine 动态壁纸"
+    },
+    {
+      "name": "widget_desc",
+      "value": "Spine 模型预览卡片"
+    },
+    {
+      "name": "widget_placeholder_title",
+      "value": "Spine 预览"
+    },
+    {
+      "name": "widget_placeholder_hint",
+      "value": "打开应用加载模型后自动更新"
+    },
+    {
+      "name": "settings_widget_section",
+      "value": "桌面卡片"
+    },
+    {
+      "name": "settings_widget_auto_update",
+      "value": "自动更新桌面卡片"
+    },
+    {
+      "name": "settings_widget_auto_update_desc",
+      "value": "加载模型后自动刷新桌面卡片快照"
+    },
+    {
+      "name": "settings_widget_update_now",
+      "value": "立即更新卡片"
+    },
+    {
+      "name": "toast_widget_updated",
+      "value": "桌面卡片已更新"
     }
   ]
 }

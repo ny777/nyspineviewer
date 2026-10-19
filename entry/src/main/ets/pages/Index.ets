@@ -32,9 +32,17 @@ import { ControlBar } from '../components/ControlBar';
 import { BgColorPickerDialog } from '../components/BgColorPickerDialog';
 import { GroupPickerDialog } from '../components/GroupPickerDialog';
 import { GroupDeleteDialog } from '../components/GroupDeleteDialog';
+import { RenameGroupDialog } from '../components/RenameGroupDialog';
 import { FrameExporter } from '../capture/FrameExporter';
+import { WidgetFormsStore, WidgetSnapshotStore, WidgetUpdater } from '../widget/WidgetStore';
 
 const CAPTURE_TIMEOUT_MS = 15000;
+/** 模型加载后延时截帧更新卡片（等首帧稳定）。 */
+const WIDGET_CAPTURE_DELAY_MS = 800;
+/** 截帧用途：保存到图库 / 自动更新卡片 / 手动更新卡片。 */
+const CAPTURE_PURPOSE_GALLERY = 'gallery';
+const CAPTURE_PURPOSE_WIDGET = 'widget';
+const CAPTURE_PURPOSE_WIDGET_MANUAL = 'widget-manual';
 const LOG_DOMAIN = 0x0031;
 const TAG = 'SpineIndex';
 /** 收藏颜色默认列表（ARGB 十六进制，HdsColorPicker 收藏夹）。 */
@@ -79,24 +87,34 @@ struct Index {
   private colorDialogController: CustomDialogController | null = null;
   private groupPickerController: CustomDialogController | null = null;
   private groupDeleteController: CustomDialogController | null = null;
+  private renameGroupController: CustomDialogController | null = null;
 
   // 截帧分块缓存
   private captureChunks: Array<string> = [];
   private captureTotal: number = 0;
   private captureTimerId: number = -1;
+  /** 本次截帧用途（见 CAPTURE_PURPOSE_*）。 */
+  private capturePurpose: string = CAPTURE_PURPOSE_GALLERY;
+  private widgetCaptureTimerId: number = -1;
 
   @State models: Array<SpineModelItem> = [];
   @State importing: boolean = false;
   /** 批量导入进度显示（"done/total"，空串表示无进度）。 */
   @State importProgress: string = '';
+  /** 用户请求取消当前批量导入（在当前 ZIP 边界生效）。 */
+  private cancelImportRequested: boolean = false;
   @State selectedSlot: number = 0;
   @State playing: boolean = true;
   private pausedByHide: boolean = false;
   @State fps: number = 60;
+  @State tapSwitch: boolean = true;
+  @State widgetAutoUpdate: boolean = false;
   @State bgColor: string = '#0F172A';
   /** 背景图文件名（<filesDir>/bg/ 内，空串表示未设置）。 */
   @State bgImageName: string = '';
   @State capturing: boolean = false;
+  /** 主模型加载遮罩（LOAD_MODEL 发出 → onModelLoaded/onError）。 */
+  @State modelLoading: boolean = false;
   @State mainModelId: string = '';
   @State subModelId: string = '';
   @State slotUi: Array<SlotUiState> = [new SlotUiState(), new SlotUiState()];
@@ -148,6 +166,8 @@ struct Index {
     this.selectedSlot = prefs.getNumber(PrefsKeys.SELECTED_SLOT, 0) === 1 ? 1 : 0;
     this.playing = true;
     this.fps = clampInt(prefs.getNumber(PrefsKeys.TARGET_FPS, 60), 15, 120);
+    this.tapSwitch = prefs.getBool(PrefsKeys.TAP_SWITCH_ANIMATION, true);
+    this.widgetAutoUpdate = prefs.getBool(PrefsKeys.WIDGET_AUTO_UPDATE, false);
     this.bgColor = intColorToHex(prefs.getNumber(PrefsKeys.BG_COLOR, PrefsManager.defaultBgColor));
     this.bgImageName = prefs.getString(PrefsKeys.BG_IMAGE_PATH, '');
     this.bgFavorites = this.loadBgFavorites(prefs);
@@ -158,6 +178,7 @@ struct Index {
 
   aboutToDisappear(): void {
     this.clearCaptureTimer();
+    this.clearWidgetTimer();
   }
 
   onPageHide(): void {
@@ -199,6 +220,23 @@ struct Index {
           .width('100%')
           .height('100%')
 
+          // 主模型加载遮罩
+          if (this.modelLoading) {
+            Column({ space: 12 }) {
+              LoadingProgress()
+                .width(44)
+                .height(44)
+                .color(this.theme().accent)
+              Text($r('app.string.model_loading'))
+                .fontSize(13)
+                .fontColor(this.theme().textSecondary)
+            }
+            .width('100%')
+            .height('100%')
+            .justifyContent(FlexAlign.Center)
+            .backgroundColor('rgba(0,0,0,0.35)')
+          }
+
           // 悬浮控制条（避开底部悬浮页签栏）
           Column() {
             ControlBar({
@@ -222,7 +260,7 @@ struct Index {
                 this.toggleSkin(name);
               },
               onCapture: (): void => {
-                this.startCapture();
+                this.startCapture(CAPTURE_PURPOSE_GALLERY);
               },
               onResetTransform: (): void => {
                 this.resetTransform();
@@ -268,6 +306,9 @@ struct Index {
           },
           onDeleteGroup: (group: string): void => {
             this.deleteGroupAction(group);
+          },
+          onRenameGroup: (group: string): void => {
+            this.renameGroupAction(group);
           }
         })
       }
@@ -275,13 +316,28 @@ struct Index {
 
       TabContent() {
         SettingsPage({
-          pma: this.slotUi[this.selectedSlot].pma,
+          pmaMain: this.slotUi[0].pma,
+          pmaSub: this.slotUi[1].pma,
+          tapSwitch: this.tapSwitch,
           fps: this.fps,
-          onPmaChange: (pma: boolean): void => {
-            this.togglePma(pma);
+          widgetAutoUpdate: this.widgetAutoUpdate,
+          onPmaMainChange: (pma: boolean): void => {
+            this.togglePma(0, pma);
+          },
+          onPmaSubChange: (pma: boolean): void => {
+            this.togglePma(1, pma);
+          },
+          onTapSwitchChange: (enabled: boolean): void => {
+            this.toggleTapSwitch(enabled);
           },
           onFpsChange: (fps: number): void => {
             this.changeFps(fps);
+          },
+          onWidgetAutoUpdateChange: (enabled: boolean): void => {
+            this.toggleWidgetAutoUpdate(enabled);
+          },
+          onUpdateWidgetNow: (): void => {
+            this.updateWidgetNow();
           },
           onToggleTheme: (dark: boolean): void => {
             this.setThemeDark(dark);
@@ -342,6 +398,7 @@ struct Index {
       this.sendCommand({ cmd: BridgeCmdNames.SET_BG_IMAGE, url: `/bg/${this.bgImageName}` });
     }
     this.sendCommand({ cmd: BridgeCmdNames.SET_PLAYING, playing: this.playing });
+    this.sendCommand({ cmd: BridgeCmdNames.SET_TAP_SWITCH, tapSwitch: this.tapSwitch });
     this.loadSlotModel(0);
     this.loadSlotModel(1);
     const queued = this.pendingScripts;
@@ -375,11 +432,17 @@ struct Index {
     }
     const modelId = slot === 0 ? this.mainModelId : this.subModelId;
     if (modelId.length === 0) {
+      if (slot === 0) {
+        this.modelLoading = false;
+      }
       this.sendCommand({ cmd: BridgeCmdNames.CLEAR_SLOT, slot: slot });
       return;
     }
     const model = library.getModelById(modelId);
     if (model === null) {
+      if (slot === 0) {
+        this.modelLoading = false;
+      }
       this.sendCommand({ cmd: BridgeCmdNames.CLEAR_SLOT, slot: slot });
       return;
     }
@@ -403,6 +466,9 @@ struct Index {
         slot, String(config.scale), config.idle_motion);
     }
     const ui = this.slotUi[slot];
+    if (slot === 0) {
+      this.modelLoading = true;
+    }
     this.sendCommand({
       cmd: BridgeCmdNames.LOAD_MODEL,
       slot: slot,
@@ -486,6 +552,9 @@ struct Index {
     }
     hilog.info(LOG_DOMAIN, TAG, 'model loaded slot=%{public}d id=%{public}s anims=%{public}d skins=%{public}d',
       event.slot, event.modelId, event.animations.length, event.skins.length);
+    if (event.slot === 0) {
+      this.modelLoading = false;
+    }
     if (this.library !== null) {
       this.library.updateModelAnimSkins(event.modelId, event.animations, event.skins);
       this.models = this.library.getModels();
@@ -512,6 +581,9 @@ struct Index {
     // 加载后校正动画与皮肤（偏好中的名称可能已不存在）
     this.sendCommand({ cmd: BridgeCmdNames.PLAY_ANIMATION, slot: event.slot, name: ui.currentAnimation, loop: true });
     this.sendCommand({ cmd: BridgeCmdNames.SET_SKINS, slot: event.slot, skins: ui.selectedSkins });
+    if (this.widgetAutoUpdate) {
+      this.scheduleWidgetCapture();
+    }
   }
 
   private handleBridgeError(json: string): void {
@@ -521,6 +593,9 @@ struct Index {
     }
     hilog.error(LOG_DOMAIN, TAG, 'bridge error slot=%{public}d code=%{public}s message=%{public}s',
       event.slot, event.code, event.message);
+    if (event.slot === 0) {
+      this.modelLoading = false;
+    }
     if (event.code === 'CAPTURE_ERROR') {
       this.capturing = false;
       this.clearCaptureTimer();
@@ -586,11 +661,17 @@ struct Index {
     const base64 = this.captureChunks.join('');
     this.captureChunks = [];
     this.captureTotal = 0;
+    if (this.capturePurpose === CAPTURE_PURPOSE_WIDGET ||
+      this.capturePurpose === CAPTURE_PURPOSE_WIDGET_MANUAL) {
+      this.saveWidgetSnapshot(base64, this.capturePurpose === CAPTURE_PURPOSE_WIDGET_MANUAL);
+      return;
+    }
     FrameExporter.saveToGallery(getContext(this), base64)
       .then((): void => {
         this.capturing = false;
         this.resumeAfterOverlay();
         this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_capture_ok') });
+        this.updateWidgetFromFrame(base64);
       })
       .catch((err: BusinessError): void => {
         this.capturing = false;
@@ -603,6 +684,8 @@ struct Index {
 
   private async importModels(): Promise<void> {
     if (this.importing) {
+      // 导入中再次点击 = 请求在当前 ZIP 边界取消
+      this.cancelImportRequested = true;
       return;
     }
     const docPicker = new picker.DocumentViewPicker(getContext(this));
@@ -652,21 +735,15 @@ struct Index {
     }
     this.importing = true;
     this.importProgress = '';
+    this.cancelImportRequested = false;
     try {
       const result: BatchImportResult = await library.importBatch(zipUris, fallbackGroup,
         (done: number, total: number): void => {
           this.importProgress = `${done}/${total}`;
-        });
+        },
+        (): boolean => this.cancelImportRequested);
       this.models = library.getModels();
-      if (result.failedZips.length === 0) {
-        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_import_ok') });
-      } else if (result.importedCount > 0) {
-        this.getUIContext().getPromptAction().showToast({
-          message: `成功 ${result.importedCount} 个，失败 ${result.failedZips.length} 个：${result.failedZips.join('、')}`
-        });
-      } else {
-        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_import_fail') });
-      }
+      this.showImportResultToast(result);
       if (this.mainModelId.length === 0 && result.firstImportedId.length > 0) {
         this.applyModelSelection(0, result.firstImportedId);
       }
@@ -679,6 +756,34 @@ struct Index {
       this.importing = false;
       this.importProgress = '';
     }
+  }
+
+  /** 导入结果汇总 toast：成功/跳过重复/取消/失败拼接，混合结果 3500ms。 */
+  private showImportResultToast(result: BatchImportResult): void {
+    const parts = new Array<string>();
+    if (result.importedCount > 0) {
+      parts.push(`成功 ${result.importedCount} 个`);
+    }
+    if (result.skippedDuplicates > 0) {
+      parts.push(`跳过重复 ${result.skippedDuplicates} 个`);
+    }
+    if (result.cancelled) {
+      parts.push('已取消导入');
+    }
+    if (result.failedZips.length > 0) {
+      parts.push(`失败 ${result.failedZips.length} 个：${result.failedZips.join('、')}`);
+    }
+    if (parts.length === 0) {
+      this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_import_fail') });
+      return;
+    }
+    // 纯成功保持原有短提示，其余拼接成长提示
+    if (result.failedZips.length === 0 && result.skippedDuplicates === 0 &&
+      !result.cancelled && result.importedCount > 0) {
+      this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_import_ok') });
+      return;
+    }
+    this.getUIContext().getPromptAction().showToast({ message: parts.join('，'), duration: 3500 });
   }
 
   /** 选择模型到指定槽位（4.1 运行时门禁 + 偏好持久化 + 下发加载）。 */
@@ -816,6 +921,37 @@ struct Index {
     this.groupPickerController.open();
   }
 
+  /** 重命名分组：弹输入框预填当前名，重名冲突提示。 */
+  private renameGroupAction(group: string): void {
+    const library = this.library;
+    if (library === null || group.length === 0) {
+      return;
+    }
+    this.renameGroupController = new CustomDialogController({
+      builder: RenameGroupDialog({
+        initialName: group,
+        confirm: (newName: string): void => {
+          library.renameGroup(group, newName)
+            .then((ok: boolean): void => {
+              this.models = library.getModels();
+              if (!ok) {
+                this.getUIContext().getPromptAction().showToast({
+                  message: $r('app.string.toast_group_rename_exists')
+                });
+              }
+            })
+            .catch((): void => {
+              this.getUIContext().getPromptAction().showToast({
+                message: $r('app.string.toast_group_rename_exists')
+              });
+            });
+        }
+      }),
+      autoCancel: true
+    });
+    this.renameGroupController.open();
+  }
+
   /** 解散分组（组内模型保留，移入未分组），二次确认。 */
   private dissolveGroupAction(group: string): void {
     const library = this.library;
@@ -932,8 +1068,7 @@ struct Index {
     }
   }
 
-  private togglePma(pma: boolean): void {
-    const slot = this.selectedSlot;
+  private togglePma(slot: number, pma: boolean): void {
     this.updateSlotUi(slot, (state: SlotUiState): void => {
       state.pma = pma;
     });
@@ -941,6 +1076,16 @@ struct Index {
     const prefs = this.prefs;
     if (prefs !== null) {
       prefs.putBool(SlotPrefs.pmaKey(slot), pma);
+      prefs.flush();
+    }
+  }
+
+  private toggleTapSwitch(enabled: boolean): void {
+    this.tapSwitch = enabled;
+    this.sendCommand({ cmd: BridgeCmdNames.SET_TAP_SWITCH, tapSwitch: enabled });
+    const prefs = this.prefs;
+    if (prefs !== null) {
+      prefs.putBool(PrefsKeys.TAP_SWITCH_ANIMATION, enabled);
       prefs.flush();
     }
   }
@@ -1121,11 +1266,12 @@ struct Index {
     }
   }
 
-  private startCapture(): void {
+  private startCapture(purpose: string): void {
     if (this.capturing || !this.webReady) {
       return;
     }
     this.capturing = true;
+    this.capturePurpose = purpose;
     this.captureChunks = [];
     this.captureTotal = 0;
     this.sendCommand({ cmd: BridgeCmdNames.CAPTURE_FRAME });
@@ -1142,6 +1288,99 @@ struct Index {
       clearTimeout(this.captureTimerId);
       this.captureTimerId = -1;
     }
+  }
+
+  // ==================== 桌面卡片 ====================
+
+  private toggleWidgetAutoUpdate(enabled: boolean): void {
+    this.widgetAutoUpdate = enabled;
+    this.prefs?.putBool(PrefsKeys.WIDGET_AUTO_UPDATE, enabled);
+    this.prefs?.flush();
+  }
+
+  /** 手动“立即更新卡片”：截取当前帧更新快照并刷新卡片。 */
+  private updateWidgetNow(): void {
+    this.startCapture(CAPTURE_PURPOSE_WIDGET_MANUAL);
+  }
+
+  /** 模型加载后延时截帧更新卡片（等首帧稳定；仅已添加卡片时执行）。 */
+  private scheduleWidgetCapture(): void {
+    this.clearWidgetTimer();
+    this.widgetCaptureTimerId = setTimeout((): void => {
+      this.widgetCaptureTimerId = -1;
+      if (!this.widgetAutoUpdate || this.capturing || !this.webReady) {
+        return;
+      }
+      const ids = WidgetFormsStore.readFormIds(getContext(this));
+      if (ids.length > 0) {
+        this.startCapture(CAPTURE_PURPOSE_WIDGET);
+      }
+    }, WIDGET_CAPTURE_DELAY_MS);
+  }
+
+  private clearWidgetTimer(): void {
+    if (this.widgetCaptureTimerId >= 0) {
+      clearTimeout(this.widgetCaptureTimerId);
+      this.widgetCaptureTimerId = -1;
+    }
+  }
+
+  /** 保存快照并刷新全部卡片（widget 截帧完成路径）。 */
+  private saveWidgetSnapshot(base64: string, showResult: boolean): void {
+    const context: Context = getContext(this);
+    const title = this.currentMainModelName();
+    try {
+      WidgetSnapshotStore.saveSnapshot(context, base64, title);
+    } catch (err) {
+      this.capturing = false;
+      hilog.warn(LOG_DOMAIN, TAG, 'save widget snapshot failed');
+      if (showResult) {
+        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_capture_fail') });
+      }
+      return;
+    }
+    WidgetUpdater.updateAll(context)
+      .then((): void => {
+        this.capturing = false;
+        if (showResult) {
+          this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_widget_updated') });
+        }
+      })
+      .catch((err: BusinessError): void => {
+        this.capturing = false;
+        if (showResult) {
+          this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_capture_fail') });
+        }
+      });
+  }
+
+  /** 保存到图库成功后顺带刷新卡片（自动更新开启时复用同一帧）。 */
+  private updateWidgetFromFrame(base64: string): void {
+    if (!this.widgetAutoUpdate) {
+      return;
+    }
+    const context: Context = getContext(this);
+    const ids = WidgetFormsStore.readFormIds(context);
+    if (ids.length === 0) {
+      return;
+    }
+    try {
+      WidgetSnapshotStore.saveSnapshot(context, base64, this.currentMainModelName());
+      WidgetUpdater.updateAll(context).catch((err: BusinessError): void => {
+        hilog.warn(LOG_DOMAIN, TAG, 'update widget after capture failed');
+      });
+    } catch (err) {
+      hilog.warn(LOG_DOMAIN, TAG, 'save widget snapshot after capture failed');
+    }
+  }
+
+  private currentMainModelName(): string {
+    for (const item of this.models) {
+      if (item.id === this.mainModelId) {
+        return item.name;
+      }
+    }
+    return '';
   }
 }
 

@@ -1,18 +1,29 @@
 /**
  * 设置页（HdsTabs 第三页）：外观（背景设置入口 + 深色主题）、
- * 播放（PMA + 帧率）、关于（版本说明弹窗）。
+ * 播放（PMA + 帧率）、桌面卡片（自动更新 + 立即更新）、关于（版本说明弹窗）。
  */
 import { getTheme, ThemeColors } from '../core/Theme';
 import { VersionInfoDialog } from './VersionInfoDialog';
 
 @Component
 export struct SettingsPage {
-  @Prop pma: boolean = true;
+  @Prop pmaMain: boolean = true;
+  @Prop pmaSub: boolean = true;
+  @Prop tapSwitch: boolean = true;
   @Prop @Watch('onFpsPropChange') fps: number = 60;
+  @Prop widgetAutoUpdate: boolean = false;
   @State fpsPreview: number = 60;
-  onPmaChange: (pma: boolean) => void = (pma: boolean) => {
+  onPmaMainChange: (pma: boolean) => void = (pma: boolean) => {
+  };
+  onPmaSubChange: (pma: boolean) => void = (pma: boolean) => {
+  };
+  onTapSwitchChange: (enabled: boolean) => void = (enabled: boolean) => {
   };
   onFpsChange: (fps: number) => void = (fps: number) => {
+  };
+  onWidgetAutoUpdateChange: (enabled: boolean) => void = (enabled: boolean) => {
+  };
+  onUpdateWidgetNow: () => void = () => {
   };
   onToggleTheme: (dark: boolean) => void = (dark: boolean) => {
   };
@@ -70,6 +81,22 @@ export struct SettingsPage {
             .width('100%')
           Column() {
             this.PlaybackSection()
+          }
+          .width('100%')
+          .borderRadius(14)
+          .backgroundColor(this.theme().card)
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Start)
+
+        Column({ space: 4 }) {
+          Text($r('app.string.settings_widget_section'))
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.theme().textMuted)
+            .width('100%')
+          Column() {
+            this.WidgetSection()
           }
           .width('100%')
           .borderRadius(14)
@@ -139,6 +166,30 @@ export struct SettingsPage {
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+
+      Divider()
+        .color(this.theme().divider)
+        .width('100%')
+
+      Row({ space: 8 }) {
+        Column({ space: 2 }) {
+          Text($r('app.string.settings_tap_switch'))
+            .fontSize(15)
+            .fontColor(this.theme().text)
+          Text($r('app.string.settings_tap_switch_desc'))
+            .fontSize(12)
+            .fontColor(this.theme().textMuted)
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+        Toggle({ type: ToggleType.Switch, isOn: this.tapSwitch })
+          .onChange((isOn: boolean) => {
+            this.onTapSwitchChange(isOn);
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+      .alignItems(VerticalAlign.Center)
     }
     .width('100%')
   }
@@ -147,13 +198,30 @@ export struct SettingsPage {
   PlaybackSection() {
     Column() {
       Row({ space: 8 }) {
-        Text($r('app.string.pma_label'))
+        Text($r('app.string.settings_pma_main'))
           .fontSize(15)
           .fontColor(this.theme().text)
           .layoutWeight(1)
-        Toggle({ type: ToggleType.Switch, isOn: this.pma })
+        Toggle({ type: ToggleType.Switch, isOn: this.pmaMain })
           .onChange((isOn: boolean) => {
-            this.onPmaChange(isOn);
+            this.onPmaMainChange(isOn);
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+
+      Divider()
+        .color(this.theme().divider)
+        .width('100%')
+
+      Row({ space: 8 }) {
+        Text($r('app.string.settings_pma_sub'))
+          .fontSize(15)
+          .fontColor(this.theme().text)
+          .layoutWeight(1)
+        Toggle({ type: ToggleType.Switch, isOn: this.pmaSub })
+          .onChange((isOn: boolean) => {
+            this.onPmaSubChange(isOn);
           })
       }
       .width('100%')
@@ -184,6 +252,53 @@ export struct SettingsPage {
       .width('100%')
       .padding({ left: 16, right: 16, top: 10, bottom: 14 })
       .alignItems(VerticalAlign.Center)
+    }
+    .width('100%')
+  }
+
+  @Builder
+  WidgetSection() {
+    Column() {
+      Row({ space: 8 }) {
+        Column({ space: 2 }) {
+          Text($r('app.string.settings_widget_auto_update'))
+            .fontSize(15)
+            .fontColor(this.theme().text)
+          Text($r('app.string.settings_widget_auto_update_desc'))
+            .fontSize(12)
+            .fontColor(this.theme().textMuted)
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+        Toggle({ type: ToggleType.Switch, isOn: this.widgetAutoUpdate })
+          .onChange((isOn: boolean) => {
+            this.onWidgetAutoUpdateChange(isOn);
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+      .alignItems(VerticalAlign.Center)
+
+      Divider()
+        .color(this.theme().divider)
+        .width('100%')
+
+      Row({ space: 8 }) {
+        Text($r('app.string.settings_widget_update_now'))
+          .fontSize(15)
+          .fontColor(this.theme().text)
+          .layoutWeight(1)
+        Text('↻')
+          .fontSize(16)
+          .fontColor(this.theme().accentSoft)
+          .width(24)
+          .textAlign(TextAlign.Center)
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+      .onClick(() => {
+        this.onUpdateWidgetNow();
+      })
     }
     .width('100%')
   }

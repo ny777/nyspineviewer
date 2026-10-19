@@ -32,6 +32,7 @@
   var renderers = {}; // versionKey -> SceneRenderer（多版本共存，各自惰性创建）
   var runtimeCache = {}; // version -> spine namespace
   var playing = true;
+  var tapSwitch = true; // 点击预览切换动画开关（对齐 Android tap_switch_animation）
   var fps = 60;
   var lastFrameTime = 0;
   var bgColor = [0.059, 0.090, 0.165, 1.0]; // #0F172A
@@ -429,6 +430,10 @@
     renderFrame(0); // 暂停时也刷新一帧静态画面
   }
 
+  function cmdSetTapSwitch(msg) {
+    tapSwitch = !!msg.tapSwitch;
+  }
+
   function cmdSetFps(msg) {
     var value = Math.round(num(msg.fps, 60));
     fps = Math.min(MAX_FPS, Math.max(MIN_FPS, value));
@@ -793,6 +798,9 @@
   }
 
   function handleTap() {
+    if (!tapSwitch) {
+      return;
+    }
     var slot = slots[gestureSlot];
     if (!slot.skeletonData || slot.status !== 'loaded') {
       return;
@@ -956,6 +964,7 @@
     setTransform: cmdSetTransform,
     setPma: cmdSetPma,
     setPlaying: cmdSetPlaying,
+    setTapSwitch: cmdSetTapSwitch,
     setFps: cmdSetFps,
     setBackgroundColor: cmdSetBackgroundColor,
     setBackgroundImage: cmdSetBackgroundImage,

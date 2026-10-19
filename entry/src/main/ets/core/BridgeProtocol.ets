@@ -27,6 +27,8 @@ export interface BridgeCommand {
   x?: number;
   y?: number;
   playing?: boolean;
+  /** 点击预览切换动画开关（setTapSwitch 专用）。 */
+  tapSwitch?: boolean;
   fps?: number;
   color?: string;
   /** 背景图虚拟域相对地址（/bg/<文件名>），空串表示移除。 */
@@ -41,6 +43,7 @@ export class BridgeCmdNames {
   static readonly SET_TRANSFORM: string = 'setTransform';
   static readonly SET_PMA: string = 'setPma';
   static readonly SET_PLAYING: string = 'setPlaying';
+  static readonly SET_TAP_SWITCH: string = 'setTapSwitch';
   static readonly SET_FPS: string = 'setFps';
   static readonly SET_BG_COLOR: string = 'setBackgroundColor';
   static readonly SET_BG_IMAGE: string = 'setBackgroundImage';
