@@ -24,6 +24,8 @@ export class PrefsKeys {
   static readonly PMA2_ENABLED: string = 'pma2_enabled';
   static readonly BG_COLOR: string = 'bg_color';
   static readonly BG_IMAGE_PATH: string = 'bg_image_path';
+
+  static readonly LAST_IMPORT_GROUP: string = 'last_import_group';
   static readonly TARGET_FPS: string = 'target_fps';
   static readonly TAP_SWITCH_ANIMATION: string = 'tap_switch_animation';
 }

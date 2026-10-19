@@ -163,6 +163,74 @@
     {
       "name": "toast_transform_reset",
       "value": "已重置位置与缩放"
+    },
+    {
+      "name": "group_ungrouped",
+      "value": "未分组"
+    },
+    {
+      "name": "group_picker_title",
+      "value": "选择分组"
+    },
+    {
+      "name": "group_new_hint",
+      "value": "输入新分组名称"
+    },
+    {
+      "name": "menu_dissolve_group",
+      "value": "解散分组"
+    },
+    {
+      "name": "menu_delete_group",
+      "value": "删除分组"
+    },
+    {
+      "name": "confirm_dissolve_group",
+      "value": "确定解散分组「%s」？组内模型将保留并移入「未分组」"
+    },
+    {
+      "name": "delete_group_title",
+      "value": "删除分组"
+    },
+    {
+      "name": "delete_group_msg",
+      "value": "删除分组「%s」？请选择组内模型的处理方式"
+    },
+    {
+      "name": "btn_delete_group_only",
+      "value": "仅删分组（模型移入未分组）"
+    },
+    {
+      "name": "btn_delete_group_all",
+      "value": "删除分组及全部模型"
+    },
+    {
+      "name": "toast_group_dissolved",
+      "value": "分组已解散"
+    },
+    {
+      "name": "toast_group_update_fail",
+      "value": "分组更新失败"
+    },
+    {
+      "name": "empty_guide_title",
+      "value": "导入你的第一个 Spine 模型"
+    },
+    {
+      "name": "empty_guide_step1",
+      "value": "1. 准备 Spine 导出文件（.skel 或 .json + .atlas + 贴图）"
+    },
+    {
+      "name": "empty_guide_step2",
+      "value": "2. 将它们打包为一个 ZIP 压缩包"
+    },
+    {
+      "name": "empty_guide_step3",
+      "value": "3. 传输到本机后点击下方按钮选择 ZIP"
+    },
+    {
+      "name": "empty_guide_btn",
+      "value": "导入首个 Spine 模型 ZIP"
     }
   ]
 }

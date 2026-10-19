@@ -21,10 +21,12 @@ export class SpineModelItem {
   /** "SKEL" | "JSON"。 */
   format: string;
   createdAt: number;
+  /** 所属分组名（'' = 未分组）。 */
+  group: string;
 
   constructor(id: string, name: string, folderPath: string, skelFile: string,
     atlasFile: string, animations: Array<string>, skins: Array<string>,
-    version: string, format: string, createdAt: number) {
+    version: string, format: string, createdAt: number, group: string) {
     this.id = id;
     this.name = name;
     this.folderPath = folderPath;
@@ -35,6 +37,7 @@ export class SpineModelItem {
     this.version = version;
     this.format = format;
     this.createdAt = createdAt;
+    this.group = group;
   }
 
   /** 当前集成的 runtime 是否可直接播放（4.0 / 4.1 / 4.2）。 */

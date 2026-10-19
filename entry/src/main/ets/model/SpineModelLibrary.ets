@@ -27,6 +27,7 @@ interface ModelItemRaw {
   version?: Object;
   format?: Object;
   createdAt?: Object;
+  group?: Object;
 }
 
 /** model_meta.json 结构。 */
@@ -37,6 +38,7 @@ interface ModelMeta {
   format: string;
   skelFile: string;
   atlasFile: string;
+  group: string;
 }
 
 /** 骨架 JSON 原始结构（动画/皮肤名嗅探用）。 */
@@ -131,7 +133,7 @@ export class SpineModelLibrary {
    * 从选取的 ZIP URI 导入一个或多个模型（一个 ZIP 可含多角色）。
    * 失败抛 Error（message 为可读中文），staging 一定被清理。
    */
-  async importZip(zipUri: string): Promise<Array<SpineModelItem>> {
+  async importZip(zipUri: string, group: string): Promise<Array<SpineModelItem>> {
     const uuid = util.generateRandomUUID(false);
     const stagingDir = `${this.cacheDir}/zip_staging_${uuid}`;
     const zipTmpPath = `${this.cacheDir}/import_${uuid}.zip`;
@@ -175,7 +177,7 @@ export class SpineModelLibrary {
 
     const imported = new Array<SpineModelItem>();
     for (const skelFullPath of uniqueSkelFiles) {
-      const item = await this.importOneModel(skelFullPath, stagingDir);
+      const item = await this.importOneModel(skelFullPath, stagingDir, group);
       if (item !== null) {
         imported.push(item);
       }
@@ -207,7 +209,7 @@ export class SpineModelLibrary {
   }
 
   /** 导入单个模型（一个骨架 + 最小依赖集）。失败返回 null。 */
-  private async importOneModel(skelFullPath: string, stagingDir: string): Promise<SpineModelItem | null> {
+  private async importOneModel(skelFullPath: string, stagingDir: string, group: string): Promise<SpineModelItem | null> {
     try {
       const skelName = baseName(skelFullPath);
       const modelRoot = parentDir(skelFullPath);
@@ -338,7 +340,8 @@ export class SpineModelLibrary {
         version: versionStr,
         format: formatStr,
         skelFile: skelName,
-        atlasFile: atlasName
+        atlasFile: atlasName,
+        group: group
       };
       try {
         writeTextFile(`${targetDir}/model_meta.json`, JSON.stringify(meta));
@@ -347,7 +350,7 @@ export class SpineModelLibrary {
       }
 
       return new SpineModelItem(modelId, modelName, targetDir, skelName, atlasName,
-        animations, skins, versionStr, formatStr, Date.now());
+        animations, skins, versionStr, formatStr, Date.now(), group);
     } catch (err) {
       console.error(`${TAG} importOneModel failed: ${JSON.stringify(err)}`);
       return null;
@@ -369,6 +372,89 @@ export class SpineModelLibrary {
     }
     this.models = remaining;
     this.writeLibraryIndex(this.models);
+  }
+
+  /** 现有分组名列表（非空 group，按首现顺序）。 */
+  getGroupNames(): Array<string> {
+    const names = new Array<string>();
+    for (const m of this.models) {
+      if (m.group.length > 0 && !names.includes(m.group)) {
+        names.push(m.group);
+      }
+    }
+    return names;
+  }
+
+  /** 将单个模型移入分组（group 为 '' 表示未分组）。 */
+  async setModelGroup(modelId: string, group: string): Promise<void> {
+    const target = this.getModelById(modelId);
+    if (target === null || target.group === group) {
+      return;
+    }
+    target.group = group;
+    this.rewriteMeta(target);
+    this.writeLibraryIndex(this.models);
+  }
+
+  /** 解散分组：组内全部模型移入未分组（保留模型）。 */
+  async dissolveGroup(group: string): Promise<void> {
+    if (group.length === 0) {
+      return;
+    }
+    let changed = false;
+    for (const m of this.models) {
+      if (m.group === group) {
+        m.group = '';
+        this.rewriteMeta(m);
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.writeLibraryIndex(this.models);
+    }
+  }
+
+  /**
+   * 删除分组。
+   * @param group 分组名（非空）。
+   * @param deleteModels true = 连同组内全部模型一起删除；false = 模型移入未分组。
+   * @returns 被删除的模型 id 列表（deleteModels=false 时为空）。
+   */
+  async deleteGroup(group: string, deleteModels: boolean): Promise<Array<string>> {
+    const deletedIds = new Array<string>();
+    if (deleteModels) {
+      const members = new Array<SpineModelItem>();
+      for (const m of this.models) {
+        if (m.group === group) {
+          members.push(m);
+        }
+      }
+      for (const m of members) {
+        await this.deleteModel(m.id);
+        deletedIds.push(m.id);
+      }
+    } else {
+      await this.dissolveGroup(group);
+    }
+    return deletedIds;
+  }
+
+  /** 用条目当前字段重写 model_meta.json（分组变更持久化）。 */
+  private rewriteMeta(item: SpineModelItem): void {
+    try {
+      const meta: ModelMeta = {
+        id: item.id,
+        name: item.name,
+        version: item.version,
+        format: item.format,
+        skelFile: item.skelFile,
+        atlasFile: item.atlasFile,
+        group: item.group
+      };
+      writeTextFile(`${item.folderPath}/model_meta.json`, JSON.stringify(meta));
+    } catch (err) {
+      console.error(`${TAG} rewriteMeta failed: ${JSON.stringify(err)}`);
+    }
   }
 
   /** 用渲染层真实加载结果回填动画/皮肤名（占位值不覆盖已有真实值）。 */
@@ -441,8 +527,12 @@ export class SpineModelLibrary {
         if (typeof raw.createdAt === 'number' && Number.isFinite(raw.createdAt)) {
           createdAt = raw.createdAt;
         }
+        let group = '';
+        if (typeof raw.group === 'string') {
+          group = raw.group;
+        }
         result.push(new SpineModelItem(raw.id, raw.name, raw.folderPath, raw.skelFile,
-          atlasFile, animations, skins, version, format, createdAt));
+          atlasFile, animations, skins, version, format, createdAt, group));
       }
       return result;
     } catch (err) {
@@ -466,7 +556,8 @@ export class SpineModelLibrary {
           skins: toObjectList(m.skins),
           version: m.version,
           format: m.format,
-          createdAt: m.createdAt
+          createdAt: m.createdAt,
+          group: m.group
         };
         rawItems.push(raw);
       }

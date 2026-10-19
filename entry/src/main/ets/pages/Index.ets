@@ -27,6 +27,8 @@ import { SpineWebView, SpineBridgeProxy } from '../components/SpineWebView';
 import { ModelDrawer } from '../components/ModelDrawer';
 import { ControlBar } from '../components/ControlBar';
 import { BgColorPickerDialog } from '../components/BgColorPickerDialog';
+import { GroupPickerDialog } from '../components/GroupPickerDialog';
+import { GroupDeleteDialog } from '../components/GroupDeleteDialog';
 import { FrameExporter } from '../capture/FrameExporter';
 
 const DRAWER_WIDTH = 320;
@@ -65,6 +67,8 @@ struct Index {
   private prefs: PrefsManager | null = null;
   private library: SpineModelLibrary | null = null;
   private colorDialogController: CustomDialogController | null = null;
+  private groupPickerController: CustomDialogController | null = null;
+  private groupDeleteController: CustomDialogController | null = null;
 
   // 截帧分块缓存
   private captureChunks: Array<string> = [];
@@ -249,6 +253,15 @@ struct Index {
         },
         onDelete: (modelId: string): void => {
           this.deleteModelAction(modelId);
+        },
+        onMoveToGroup: (modelId: string): void => {
+          this.moveModelToGroup(modelId);
+        },
+        onDissolveGroup: (group: string): void => {
+          this.dissolveGroupAction(group);
+        },
+        onDeleteGroup: (group: string): void => {
+          this.deleteGroupAction(group);
         },
         onClose: (): void => {
           this.drawerOpen = false;
@@ -563,13 +576,39 @@ struct Index {
     if (uris.length === 0) {
       return;
     }
+    this.pickImportGroup(uris[0]);
+  }
+
+  /** 导入前选择分组（记忆上次选择），确定后执行导入。 */
+  private pickImportGroup(zipUri: string): void {
+    const library = this.library;
+    const prefs = this.prefs;
+    if (library === null || prefs === null) {
+      return;
+    }
+    this.groupPickerController = new CustomDialogController({
+      builder: GroupPickerDialog({
+        groups: library.getGroupNames(),
+        initialGroup: prefs.getString(PrefsKeys.LAST_IMPORT_GROUP, ''),
+        confirm: (group: string): void => {
+          prefs.putString(PrefsKeys.LAST_IMPORT_GROUP, group);
+          prefs.flush();
+          this.runImport(zipUri, group);
+        }
+      }),
+      autoCancel: true
+    });
+    this.groupPickerController.open();
+  }
+
+  private async runImport(zipUri: string, group: string): Promise<void> {
     const library = this.library;
     if (library === null) {
       return;
     }
     this.importing = true;
     try {
-      const imported = await library.importZip(uris[0]);
+      const imported = await library.importZip(zipUri, group);
       this.models = library.getModels();
       this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_import_ok') });
       if (this.mainModelId.length === 0 && imported.length > 0) {
@@ -636,31 +675,126 @@ struct Index {
 
   private performDelete(modelId: string): void {
     const library = this.library;
-    const prefs = this.prefs;
-    if (library === null || prefs === null) {
+    if (library === null) {
       return;
     }
     library.deleteModel(modelId)
       .then((): void => {
         this.models = library.getModels();
-        if (this.mainModelId === modelId) {
-          this.mainModelId = '';
-          prefs.putString(PrefsKeys.ACTIVE_MODEL_ID, '');
-          this.sendCommand({ cmd: BridgeCmdNames.CLEAR_SLOT, slot: 0 });
-          this.resetSlotUi(0);
-        }
-        if (this.subModelId === modelId) {
-          this.subModelId = '';
-          prefs.putString(PrefsKeys.MODEL2_ID, '');
-          this.sendCommand({ cmd: BridgeCmdNames.CLEAR_SLOT, slot: 1 });
-          this.resetSlotUi(1);
-        }
-        prefs.flush();
+        this.cleanupSlotsForDeleted(modelId);
         this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_deleted') });
       })
       .catch((err: BusinessError): void => {
         this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_delete_fail') });
       });
+  }
+
+  /** 模型被删除后清理其占用的槽位（偏好 + WebView 槽 + 面板 UI）。 */
+  private cleanupSlotsForDeleted(modelId: string): void {
+    const prefs = this.prefs;
+    if (prefs === null) {
+      return;
+    }
+    if (this.mainModelId === modelId) {
+      this.mainModelId = '';
+      prefs.putString(PrefsKeys.ACTIVE_MODEL_ID, '');
+      this.sendCommand({ cmd: BridgeCmdNames.CLEAR_SLOT, slot: 0 });
+      this.resetSlotUi(0);
+    }
+    if (this.subModelId === modelId) {
+      this.subModelId = '';
+      prefs.putString(PrefsKeys.MODEL2_ID, '');
+      this.sendCommand({ cmd: BridgeCmdNames.CLEAR_SLOT, slot: 1 });
+      this.resetSlotUi(1);
+    }
+    prefs.flush();
+  }
+
+  // ==================== 分组操作 ====================
+
+  /** 单卡「移动到分组」：打开分组选择弹窗。 */
+  private moveModelToGroup(modelId: string): void {
+    const library = this.library;
+    if (library === null) {
+      return;
+    }
+    const model = library.getModelById(modelId);
+    if (model === null) {
+      return;
+    }
+    this.groupPickerController = new CustomDialogController({
+      builder: GroupPickerDialog({
+        groups: library.getGroupNames(),
+        initialGroup: model.group,
+        confirm: (group: string): void => {
+          library.setModelGroup(modelId, group)
+            .then((): void => {
+              this.models = library.getModels();
+            })
+            .catch((): void => {
+              this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_group_update_fail') });
+            });
+        }
+      }),
+      autoCancel: true
+    });
+    this.groupPickerController.open();
+  }
+
+  /** 解散分组（组内模型保留，移入未分组），二次确认。 */
+  private dissolveGroupAction(group: string): void {
+    const library = this.library;
+    if (library === null || group.length === 0) {
+      return;
+    }
+    this.getUIContext().showAlertDialog({
+      message: $r('app.string.confirm_dissolve_group', group),
+      primaryButton: {
+        value: $r('app.string.dialog_cancel'),
+        action: (): void => {
+        }
+      },
+      secondaryButton: {
+        value: $r('app.string.dialog_ok'),
+        action: (): void => {
+          library.dissolveGroup(group)
+            .then((): void => {
+              this.models = library.getModels();
+              this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_group_dissolved') });
+            });
+        }
+      }
+    });
+  }
+
+  /** 删除分组：弹三选一确认（仅删分组 / 删除组及全部模型 / 取消）。 */
+  private deleteGroupAction(group: string): void {
+    const library = this.library;
+    if (library === null || group.length === 0) {
+      return;
+    }
+    this.groupDeleteController = new CustomDialogController({
+      builder: GroupDeleteDialog({
+        groupName: group,
+        confirm: (deleteModels: boolean): void => {
+          library.deleteGroup(group, deleteModels)
+            .then((deletedIds: Array<string>): void => {
+              this.models = library.getModels();
+              for (const id of deletedIds) {
+                this.cleanupSlotsForDeleted(id);
+              }
+              this.getUIContext().getPromptAction().showToast({
+                message: deleteModels ? $r('app.string.toast_deleted') : $r('app.string.toast_group_dissolved')
+              });
+            })
+            .catch((err: BusinessError): void => {
+              this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_delete_fail') });
+            });
+        }
+      }),
+      autoCancel: true
+    });
+    this.groupDeleteController.open();
   }
 
   private resetSlotUi(slot: number): void {
