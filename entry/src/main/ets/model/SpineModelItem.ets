@@ -1,6 +1,10 @@
 /**
  * 模型库条目数据类（对齐 Android 版 SpineModelItem.kt，分组字段按本期范围裁剪）。
  */
+
+/** 已集成 runtime bundle 的版本（runtimes/spine-<version>.js 必须存在）。 */
+const SUPPORTED_VERSIONS: Array<string> = ['4.0', '4.1', '4.2'];
+
 export class SpineModelItem {
   id: string;
   name: string;
@@ -33,9 +37,9 @@ export class SpineModelItem {
     this.createdAt = createdAt;
   }
 
-  /** 当前集成的 runtime 是否可直接播放（本期仅 4.1）。 */
+  /** 当前集成的 runtime 是否可直接播放（4.0 / 4.1 / 4.2）。 */
   isSupported(): boolean {
-    return this.version === '4.1';
+    return SUPPORTED_VERSIONS.indexOf(this.version) >= 0;
   }
 
   /** 骨架文件沙箱绝对路径。 */

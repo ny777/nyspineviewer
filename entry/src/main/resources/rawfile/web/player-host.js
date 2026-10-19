@@ -29,7 +29,7 @@
 
   var canvas = document.getElementById('spine-canvas');
   var gl = null;
-  var renderer = null;
+  var renderers = {}; // versionKey -> SceneRenderer（多版本共存，各自惰性创建）
   var runtimeCache = {}; // version -> spine namespace
   var playing = true;
   var fps = 60;
@@ -53,6 +53,7 @@
     this.state = null;
     this.animationError = false;
     this.currentAnimationName = '';
+    this.rt = null; // 本槽位对应的 spine 运行时命名空间（多版本共存）
     // 期望状态：加载完成前先暂存，加载后统一应用（对应 Android 版期望状态语义）
     this.desired = { animation: null, loop: true, skins: [], transform: null };
     this.transform = { scale: 1, x: 0, y: 0 };
@@ -122,6 +123,7 @@
         var rt = window.spineRuntimes && window.spineRuntimes[version];
         if (rt) {
           runtimeCache[version] = rt;
+          console.log('[spine] runtime ' + version + ' loaded & registered');
           resolve(rt);
         } else {
           reject(new Error('runtime ' + version + ' 未集成（bundle 未注册 spineRuntimes）'));
@@ -240,6 +242,7 @@
         });
       }).then(function (skeletonData) {
         var spine = runtimeCache[slot.version];
+        slot.rt = spine; // 供渲染循环做版本分支（如 4.2 Physics）
         var skeleton = new spine.Skeleton(skeletonData);
         var stateData = new spine.AnimationStateData(skeletonData);
         stateData.defaultMix = 0.2; // 4.1 行为蓝本
@@ -483,7 +486,7 @@
   }
 
   function renderFrame(deltaSeconds) {
-    if (!gl || !renderer) {
+    if (!gl) {
       return;
     }
     diag.drawn++;
@@ -492,21 +495,36 @@
     gl.viewport(0, 0, canvas.width, canvas.height);
     gl.clearColor(bgColor[0], bgColor[1], bgColor[2], bgColor[3]);
     gl.clear(gl.COLOR_BUFFER_BIT);
-    var cam = renderer.camera;
-    cam.position.set(size.w / 2, size.h / 2, 0);
-    cam.viewportWidth = size.w;
-    cam.viewportHeight = size.h;
-    renderer.begin();
     // slot1 先画（后层），slot0 后画（前层），与 Android 版层级一致
     var order = [1, 0];
+    var active = null;
     for (var k = 0; k < order.length; k++) {
       var idx = order[k];
       var slot = slots[idx];
       if (!slot.skeleton) {
         continue;
       }
+      var r = rendererFor(slot.version);
+      if (!r) {
+        continue;
+      }
+      // 版本切换时严格配对 begin/end，避免 GL 批次状态泄漏
+      if (r !== active) {
+        if (active) {
+          active.end();
+        }
+        r.begin();
+        active = r;
+      }
+      var cam = r.camera;
+      cam.position.set(size.w / 2, size.h / 2, 0);
+      cam.viewportWidth = size.w;
+      cam.viewportHeight = size.h;
       if (slot.state && !slot.animationError) {
         try {
+          if (slot.version === '4.2' && slot.skeleton.update) {
+            slot.skeleton.update(deltaSeconds); // 4.2 物理约束时间步
+          }
           slot.state.update(deltaSeconds);
           slot.state.apply(slot.skeleton);
         } catch (e) {
@@ -518,10 +536,17 @@
         }
       }
       applySkeletonTransform(idx);
-      slot.skeleton.updateWorldTransform();
-      renderer.drawSkeleton(slot.skeleton, slot.pma);
+      if (slot.version === '4.2' && slot.rt) {
+        // 4.2 运行时必须显式指定物理模式，无参会抛错
+        slot.skeleton.updateWorldTransform(slot.rt.Physics.update);
+      } else {
+        slot.skeleton.updateWorldTransform();
+      }
+      r.drawSkeleton(slot.skeleton, slot.pma);
     }
-    renderer.end();
+    if (active) {
+      active.end();
+    }
   }
 
   function tick(now) {
@@ -816,30 +841,21 @@
     window.requestAnimationFrame(tick);
   }
 
-  // SceneRenderer 依赖 spine 命名空间，runtime 注入后延迟创建
-  function ensureRenderer() {
-    if (renderer || !gl) {
-      return;
+  // per-version SceneRenderer：多运行时版本共存，各版本惰性创建，避免命名空间互相覆盖
+  function rendererFor(versionKey) {
+    if (!gl || !versionKey) {
+      return null;
     }
-    var spine = null;
-    for (var version in runtimeCache) {
-      spine = runtimeCache[version];
-      break;
+    if (!renderers[versionKey]) {
+      var rt = runtimeCache[versionKey];
+      if (!rt) {
+        return null;
+      }
+      renderers[versionKey] = new rt.SceneRenderer(canvas, gl, true);
+      console.log('[spine] renderer created for ' + versionKey);
     }
-    if (!spine) {
-      return;
-    }
-    renderer = new spine.SceneRenderer(canvas, gl, true);
+    return renderers[versionKey];
   }
-
-  // 在 runtime 加载成功后确保 renderer 存在
-  var baseEnsureRuntime = ensureRuntime;
-  ensureRuntime = function (version) {
-    return baseEnsureRuntime(version).then(function (spine) {
-      ensureRenderer();
-      return spine;
-    });
-  };
 
   init();
 })();
