@@ -224,6 +224,9 @@ struct Index {
               },
               onResetTransform: (): void => {
                 this.resetTransform();
+              },
+              onClearSlot: (): void => {
+                this.clearSlotModel(this.selectedSlot);
               }
             })
             .width('100%')
@@ -292,7 +295,10 @@ struct Index {
     .vertical(false)
     .scrollable(false)
     .cachedMaxCount(2, TabsCacheMode.CACHE_BOTH_SIDE)
-    .barFloatingStyle()
+    .barFloatingStyle({
+      barSideMargin: 16,
+      barBottomMargin: 12
+    })
     .onChange((index: number) => {
       this.handleTabChange(index);
     })
@@ -684,6 +690,24 @@ struct Index {
     } else {
       this.subModelId = modelId;
       prefs.putString(PrefsKeys.MODEL2_ID, modelId);
+    }
+    prefs.flush();
+    this.initSlotUi(slot);
+    this.loadSlotModel(slot);
+  }
+
+  /** 清空槽位模型：置空偏好 + 复位槽位 UI + 下发 CLEAR_SLOT（模型仍保留在库中）。 */
+  private clearSlotModel(slot: number): void {
+    const prefs = this.prefs;
+    if (prefs === null) {
+      return;
+    }
+    if (slot === 0) {
+      this.mainModelId = '';
+      prefs.putString(PrefsKeys.ACTIVE_MODEL_ID, '');
+    } else {
+      this.subModelId = '';
+      prefs.putString(PrefsKeys.MODEL2_ID, '');
     }
     prefs.flush();
     this.initSlotUi(slot);

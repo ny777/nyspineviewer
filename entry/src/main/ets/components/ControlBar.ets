@@ -27,6 +27,8 @@ export struct ControlBar {
   };
   onResetTransform: () => void = () => {
   };
+  onClearSlot: () => void = () => {
+  };
 
   private theme(): ThemeColors {
     return getTheme(this.themeDark);
@@ -92,7 +94,7 @@ export struct ControlBar {
       .width('100%')
       .alignItems(VerticalAlign.Center)
 
-      // 行2：动画
+      // 行2：动画 + 皮肤 + 清空当前槽位模型（合并单行）
       Row({ space: 10 }) {
         Text($r('app.string.animation_label'))
           .fontSize(12)
@@ -101,19 +103,13 @@ export struct ControlBar {
           .fontSize(12)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .constraintSize({ maxWidth: 220 })
+          .constraintSize({ maxWidth: 160 })
           .padding({ left: 12, right: 12, top: 7, bottom: 7 })
           .borderRadius(15)
           .backgroundColor(this.theme().chip)
           .fontColor(this.theme().text)
           .bindMenu(this.AnimationMenuBuilder)
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-
-      // 行3：皮肤多选
-      if (this.skins.length > 0) {
-        Row({ space: 8 }) {
+        if (this.skins.length > 0) {
           Text($r('app.string.skins_label'))
             .fontSize(12)
             .fontColor(this.theme().textSecondary)
@@ -136,10 +132,22 @@ export struct ControlBar {
           .scrollable(ScrollDirection.Horizontal)
           .scrollBar(BarState.Off)
           .layoutWeight(1)
+        } else {
+          Blank()
+            .layoutWeight(1)
         }
-        .width('100%')
-        .alignItems(VerticalAlign.Center)
+        Text(this.slot === 0 ? $r('app.string.clear_main_model') : $r('app.string.clear_sub_model'))
+          .fontSize(12)
+          .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+          .borderRadius(14)
+          .backgroundColor(this.theme().chip)
+          .fontColor(this.theme().danger)
+          .onClick(() => {
+            this.onClearSlot();
+          })
       }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
     }
     .padding({ left: 16, right: 16, top: 12, bottom: 12 })
     .borderRadius(20)

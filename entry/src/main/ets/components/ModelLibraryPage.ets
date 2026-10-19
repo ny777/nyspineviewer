@@ -111,9 +111,7 @@ export struct ModelLibraryPage {
               Column({ space: 10 }) {
                 this.GroupHeader(group)
                 if (!this.isCollapsed(group.name)) {
-                  ForEach(group.models, (model: SpineModelItem) => {
-                    this.ModelCard(model)
-                  }, (model: SpineModelItem) => model.id)
+                  this.ModelPairGrid(group.models)
                 }
               }
               .width('100%')
@@ -218,6 +216,46 @@ export struct ModelLibraryPage {
     .onClick(() => {
       this.toggleCollapse(group.name);
     })
+  }
+
+  private chunkPairs(models: Array<SpineModelItem>): Array<Array<SpineModelItem>> {
+    const pairs = new Array<Array<SpineModelItem>>();
+    for (let i = 0; i < models.length; i += 2) {
+      const pair = new Array<SpineModelItem>();
+      pair.push(models[i]);
+      if (i + 1 < models.length) {
+        pair.push(models[i + 1]);
+      }
+      pairs.push(pair);
+    }
+    return pairs;
+  }
+
+  /** 两列卡片：每行两个等宽卡片，奇数行右侧留占位。 */
+  @Builder
+  ModelPairGrid(models: Array<SpineModelItem>) {
+    Column({ space: 10 }) {
+      ForEach(this.chunkPairs(models), (pair: Array<SpineModelItem>) => {
+        Row({ space: 10 }) {
+          Column() {
+            this.ModelCard(pair[0])
+          }
+          .layoutWeight(1)
+          if (pair.length > 1) {
+            Column() {
+              this.ModelCard(pair[1])
+            }
+            .layoutWeight(1)
+          } else {
+            Column()
+              .layoutWeight(1)
+          }
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Top)
+      }, (pair: Array<SpineModelItem>) => `${pair[0].id}::${pair.length}`)
+    }
+    .width('100%')
   }
 
   @Builder

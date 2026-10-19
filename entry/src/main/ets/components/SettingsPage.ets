@@ -8,7 +8,8 @@ import { VersionInfoDialog } from './VersionInfoDialog';
 @Component
 export struct SettingsPage {
   @Prop pma: boolean = true;
-  @Prop fps: number = 60;
+  @Prop @Watch('onFpsPropChange') fps: number = 60;
+  @State fpsPreview: number = 60;
   onPmaChange: (pma: boolean) => void = (pma: boolean) => {
   };
   onFpsChange: (fps: number) => void = (fps: number) => {
@@ -26,6 +27,14 @@ export struct SettingsPage {
 
   private theme(): ThemeColors {
     return getTheme(this.themeDark);
+  }
+
+  aboutToAppear(): void {
+    this.fpsPreview = this.fps;
+  }
+
+  private onFpsPropChange(): void {
+    this.fpsPreview = this.fps;
   }
 
   build() {
@@ -158,7 +167,7 @@ export struct SettingsPage {
         Text($r('app.string.fps_label'))
           .fontSize(15)
           .fontColor(this.theme().text)
-        Text(`${this.fps}`)
+        Text(`${this.fpsPreview}`)
           .fontSize(14)
           .fontColor(this.theme().textSecondary)
           .width(32)
@@ -166,6 +175,7 @@ export struct SettingsPage {
         Slider({ value: this.fps, min: 15, max: 120, step: 1, style: SliderStyle.OutSet })
           .layoutWeight(1)
           .onChange((value: number, mode: SliderChangeMode) => {
+            this.fpsPreview = Math.round(value);
             if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
               this.onFpsChange(Math.round(value));
             }

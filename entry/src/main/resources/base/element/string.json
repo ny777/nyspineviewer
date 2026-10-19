@@ -253,6 +253,14 @@
       "value": "背景设置"
     },
     {
+      "name": "clear_main_model",
+      "value": "清空主模型"
+    },
+    {
+      "name": "clear_sub_model",
+      "value": "清空副模型"
+    },
+    {
       "name": "tab_play",
       "value": "播放"
     },
