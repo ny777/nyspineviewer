@@ -95,6 +95,11 @@
   }
 
   function notifyError(slotIdx, code, message) {
+    try {
+      console.error('[SpineHost] error ' + code + ': ' + message);
+    } catch (e) {
+      // console 不可用时忽略
+    }
     bridgeCall('onError', JSON.stringify({
       slot: slotIdx,
       code: code,
@@ -760,11 +765,31 @@
 
   function init() {
     var contextOptions = { alpha: true, antialias: true };
+    try {
+      console.log('[SpineHost] diag UA: ' + navigator.userAgent);
+      console.log('[SpineHost] diag WebAssembly: ' + typeof WebAssembly);
+      var p1 = document.createElement('canvas');
+      var g2 = p1.getContext('webgl2', contextOptions);
+      console.log('[SpineHost] diag fresh webgl2: ' + (g2 ? (g2.getParameter(g2.VERSION) + ' | ' + g2.getParameter(g2.RENDERER)) : 'null'));
+      var p2 = document.createElement('canvas');
+      var g1 = p2.getContext('webgl', contextOptions);
+      console.log('[SpineHost] diag fresh webgl(aa): ' + (g1 ? (g1.getParameter(g1.VERSION) + ' | ' + g1.getParameter(g1.RENDERER)) : 'null'));
+      var p3 = document.createElement('canvas');
+      console.log('[SpineHost] diag fresh webgl(noopts): ' + (p3.getContext('webgl') ? 'ok' : 'null'));
+      var p4 = document.createElement('canvas');
+      console.log('[SpineHost] diag fresh experimental-webgl: ' + (p4.getContext('experimental-webgl', contextOptions) ? 'ok' : 'null'));
+      var p5 = document.createElement('canvas');
+      console.log('[SpineHost] diag fresh 2d: ' + (p5.getContext('2d') ? 'ok' : 'null'));
+    } catch (e) {
+      console.log('[SpineHost] diag error: ' + ((e && e.message) || e));
+    }
     gl = canvas.getContext('webgl', contextOptions) || canvas.getContext('experimental-webgl', contextOptions);
     if (!gl) {
-      notifyError(0, 'NO_WEBGL', '当前 WebView 不支持 WebGL');
+      console.error('[SpineHost] WebGL context creation failed (webgl & experimental-webgl both null)');
+      notifyError(0, 'NO_WEBGL', '当前环境不支持 WebGL，请尝试真机设备运行');
       return;
     }
+    console.log('[SpineHost] WebGL context ready: ' + gl.getParameter(gl.VERSION) + ' | ' + gl.getParameter(gl.RENDERER));
     resizeIfNeeded();
     window.addEventListener('resize', function () {
       renderFrame(0);

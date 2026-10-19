@@ -6,6 +6,7 @@ import { webview } from '@kit.ArkWeb';
 import { picker } from '@kit.CoreFileKit';
 import { Context } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import { PrefsManager, PrefsKeys, SlotPrefs } from '../core/PrefsManager';
 import {
   BridgeCmdNames,
@@ -28,6 +29,8 @@ import { FrameExporter } from '../capture/FrameExporter';
 
 const DRAWER_WIDTH = 320;
 const CAPTURE_TIMEOUT_MS = 15000;
+const LOG_DOMAIN = 0x0031;
+const TAG = 'SpineIndex';
 
 /** 单槽位 UI 状态（不可变更新：修改走 clone + 数组重赋值）。 */
 class SlotUiState {
@@ -245,6 +248,7 @@ struct Index {
       return;
     }
     this.webReady = true;
+    hilog.info(LOG_DOMAIN, TAG, 'web ready, main=%{public}s sub=%{public}s', this.mainModelId, this.subModelId);
     this.sendCommand({ cmd: BridgeCmdNames.SET_GESTURE_SLOT, slot: this.selectedSlot });
     this.sendCommand({ cmd: BridgeCmdNames.SET_FPS, fps: this.fps });
     this.sendCommand({ cmd: BridgeCmdNames.SET_BG_COLOR, color: this.bgColor });
@@ -353,8 +357,11 @@ struct Index {
   private handleModelLoaded(json: string): void {
     const event = parseModelLoadedEvent(json);
     if (event === null) {
+      hilog.warn(LOG_DOMAIN, TAG, 'modelLoaded event parse failed: %{public}s', json);
       return;
     }
+    hilog.info(LOG_DOMAIN, TAG, 'model loaded slot=%{public}d id=%{public}s anims=%{public}d skins=%{public}d',
+      event.slot, event.modelId, event.animations.length, event.skins.length);
     if (this.library !== null) {
       this.library.updateModelAnimSkins(event.modelId, event.animations, event.skins);
       this.models = this.library.getModels();
@@ -385,6 +392,8 @@ struct Index {
     if (event === null) {
       return;
     }
+    hilog.error(LOG_DOMAIN, TAG, 'bridge error slot=%{public}d code=%{public}s message=%{public}s',
+      event.slot, event.code, event.message);
     if (event.code === 'CAPTURE_ERROR') {
       this.capturing = false;
       this.clearCaptureTimer();

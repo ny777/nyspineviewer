@@ -6,9 +6,12 @@
  */
 import { webview } from '@kit.ArkWeb';
 import { fileIo } from '@kit.CoreFileKit';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 
 const VIRTUAL_HOST = 'https://spine.local';
 const HOST_PREFIX = `${VIRTUAL_HOST}/`;
+const LOG_DOMAIN = 0x0031;
+const TAG = 'SpineWebView';
 
 /**
  * javaScriptProxy 注册的桥对象。同步方法回调运行在主线程，
@@ -72,6 +75,12 @@ export struct SpineWebView {
         controller: this.controller
       })
       .onInterceptRequest((event: OnInterceptRequestEvent) => this.routeRequest(event.request))
+      .onConsole((event: OnConsoleEvent) => {
+        const message = event.message;
+        hilog.info(LOG_DOMAIN, TAG, '[web] %{public}s:%{public}d %{public}s',
+          message.getSourceId(), message.getLineNumber(), message.getMessage());
+        return false;
+      })
       .javaScriptAccess(true)
       .zoomAccess(false)
       .fileAccess(false)
