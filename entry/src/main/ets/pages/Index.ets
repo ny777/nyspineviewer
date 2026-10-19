@@ -100,6 +100,7 @@ struct Index {
   private setThemeDark(dark: boolean): void {
     AppStorage.setOrCreate('themeDark', dark);
     this.prefs?.putString(PrefsKeys.THEME_MODE, dark ? 'dark' : 'light');
+    this.prefs?.flush();
   }
 
   async aboutToAppear(): Promise<void> {
