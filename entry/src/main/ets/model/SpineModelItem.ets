@@ -23,10 +23,13 @@ export class SpineModelItem {
   createdAt: number;
   /** 所属分组名（'' = 未分组）。 */
   group: string;
+  /** 内容哈希（skel+atlas SHA-256 hex，重复导入判重用；空串 = 未知，不参与判重）。 */
+  contentHash: string;
 
   constructor(id: string, name: string, folderPath: string, skelFile: string,
     atlasFile: string, animations: Array<string>, skins: Array<string>,
-    version: string, format: string, createdAt: number, group: string) {
+    version: string, format: string, createdAt: number, group: string,
+    contentHash: string = '') {
     this.id = id;
     this.name = name;
     this.folderPath = folderPath;
@@ -38,6 +41,7 @@ export class SpineModelItem {
     this.format = format;
     this.createdAt = createdAt;
     this.group = group;
+    this.contentHash = contentHash;
   }
 
   /** 当前集成的 runtime 是否可直接播放（4.0 / 4.1 / 4.2）。 */

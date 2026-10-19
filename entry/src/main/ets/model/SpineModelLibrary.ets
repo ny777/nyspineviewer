@@ -7,13 +7,17 @@
 import { fileIo } from '@kit.CoreFileKit';
 import { zlib } from '@kit.BasicServicesKit';
 import { util } from '@kit.ArkTS';
+import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { Context } from '@kit.AbilityKit';
 import { SpineModelItem } from './SpineModelItem';
 import { detectSpineVersion } from '../core/SpineVersionDetector';
 import { spineVersionToString } from '../core/SpineVersion';
+import { peekSkelBinaryFile } from '../core/SpineBinaryPeeker';
 import { Live2DConfig, parseLive2DConfig } from './Live2DConfig';
 
 const TAG = 'SpineModelLibrary';
+/** 哈希流式读取块大小（256KB）。 */
+const HASH_CHUNK_BYTES = 262144;
 
 /** library.json 条目原始结构（JSON.parse 单次断言归一用）。 */
 interface ModelItemRaw {
@@ -28,6 +32,7 @@ interface ModelItemRaw {
   format?: Object;
   createdAt?: Object;
   group?: Object;
+  contentHash?: Object;
 }
 
 /** model_meta.json 结构。 */
@@ -52,6 +57,23 @@ export class BatchImportResult {
   importedCount: number = 0;
   firstImportedId: string = '';
   failedZips: Array<string> = new Array<string>();
+  /** 内容哈希判重跳过的模型数。 */
+  skippedDuplicates: number = 0;
+  /** 用户中途取消。 */
+  cancelled: boolean = false;
+}
+
+/** 单 ZIP 解压暂存导入结果（importStaged 产物）。 */
+class StagedImportResult {
+  imported: Array<SpineModelItem> = new Array<SpineModelItem>();
+  duplicates: number = 0;
+}
+
+/** 单模型导入结果状态（importOneModel 产物）。 */
+class ImportOneOutcome {
+  /** imported | duplicate | failed */
+  status: string = 'failed';
+  item: SpineModelItem | null = null;
 }
 
 /** ZIP 解压暂存（stageZip 产物，供 importStaged 消费）。 */
@@ -146,21 +168,35 @@ export class SpineModelLibrary {
   /**
    * 批量导入多个 ZIP：单模型 ZIP 归入 fallbackGroup；含 ≥2 个模型的 ZIP
    * 自动以 ZIP 显示名建组。单 ZIP 失败仅记录，不中断整批。
+   * 内容哈希判重：与库内既有模型或本批已导入模型重复时跳过并计数。
+   * shouldCancel 返回 true 时在当前 ZIP 边界中止（已完成结果保留）。
    */
   async importBatch(zipUris: Array<string>, fallbackGroup: string,
-    onProgress: (done: number, total: number) => void): Promise<BatchImportResult> {
+    onProgress: (done: number, total: number) => void,
+    shouldCancel?: () => boolean): Promise<BatchImportResult> {
     const result = new BatchImportResult();
+    const seenHashes = new Set<string>();
+    for (const m of this.models) {
+      if (m.contentHash.length > 0) {
+        seenHashes.add(m.contentHash);
+      }
+    }
     const total = zipUris.length;
     for (let i = 0; i < total; i++) {
+      if (shouldCancel !== undefined && shouldCancel()) {
+        result.cancelled = true;
+        break;
+      }
       const uri = zipUris[i];
       let stage: ZipStage | null = null;
       try {
         stage = await this.stageZip(uri);
         const group = stage.skelFiles.length >= 2 ? zipDisplayName(uri) : fallbackGroup;
-        const imported = await this.importStaged(stage, group);
-        result.importedCount += imported.length;
-        if (result.firstImportedId === '' && imported.length > 0) {
-          result.firstImportedId = imported[0].id;
+        const staged = await this.importStaged(stage, group, seenHashes);
+        result.importedCount += staged.imported.length;
+        result.skippedDuplicates += staged.duplicates;
+        if (result.firstImportedId === '' && staged.imported.length > 0) {
+          result.firstImportedId = staged.imported[0].id;
         }
       } catch (err) {
         console.error(`${TAG} importBatch zip failed: ${JSON.stringify(err)}`);
@@ -221,46 +257,92 @@ export class SpineModelLibrary {
 
     // 同目录同 basename 视为同一模型，去重后仅导入一次（优先 .skel 二进制）
     stage.skelFiles = dedupeSkelFiles(skelFiles);
+
+    // 导入时贴图存在性校验：atlas 引用的页在暂存树中完全无匹配即失败（提前拦截渲染期黑屏）
+    try {
+      this.validateStagedTextures(stage);
+    } catch (err) {
+      this.cleanupTemp(stage.stagingDir, stage.zipTmpPath);
+      throw err as Error;
+    }
     return stage;
   }
 
   /**
-   * 导入暂存产物（一个 ZIP 可含多角色），合并进索引：新模型置于列表头。
-   * 全部失败抛 Error；临时产物由调用方（importBatch finally）清理。
+   * 校验暂存产物内每个骨架的 atlas 页引用均能在暂存树中找到贴图文件
+   * （basename + 小写 + 去扩展名宽松匹配，与 AtlasSanitizer 归一规则一致；
+   * 大小写/反斜杠差异放行，加载时由 sanitize 修正）。缺失抛 Error。
    */
-  private async importStaged(stage: ZipStage, group: string): Promise<Array<SpineModelItem>> {
-    const imported = new Array<SpineModelItem>();
+  private validateStagedTextures(stage: ZipStage): void {
+    const fileIndex: Record<string, boolean> = {};
+    for (const file of collectFilesRecursive(stage.stagingDir)) {
+      const name = baseName(file).toLowerCase();
+      fileIndex[name] = true;
+      const dot = name.lastIndexOf('.');
+      if (dot > 0) {
+        fileIndex[name.substring(0, dot)] = true;
+      }
+    }
     for (const skelFullPath of stage.skelFiles) {
-      const item = await this.importOneModel(skelFullPath, stage.stagingDir, group);
-      if (item !== null) {
-        imported.push(item);
+      const dirFiles = listDirFiles(parentDir(skelFullPath));
+      const base = stripSkelSuffix(baseName(skelFullPath));
+      const matchedAtlas = findMatchedAtlas(dirFiles, base);
+      if (matchedAtlas === null) {
+        continue;
+      }
+      const pages = resolveAtlasImages(`${parentDir(skelFullPath)}/${matchedAtlas}`);
+      for (const page of pages) {
+        if (fileIndex[page.toLowerCase()] !== true) {
+          throw new Error(`贴图缺失: ${page}（请确认压缩包内包含完整贴图文件）`);
+        }
+      }
+    }
+  }
+
+  /**
+   * 导入暂存产物（一个 ZIP 可含多角色），合并进索引：新模型置于列表头。
+   * 全部失败且无重复时抛 Error；临时产物由调用方（importBatch finally）清理。
+   */
+  private async importStaged(stage: ZipStage, group: string,
+    seenHashes: Set<string>): Promise<StagedImportResult> {
+    const result = new StagedImportResult();
+    for (const skelFullPath of stage.skelFiles) {
+      const outcome = await this.importOneModel(skelFullPath, stage.stagingDir, group, seenHashes);
+      if (outcome.status === 'imported' && outcome.item !== null) {
+        result.imported.push(outcome.item);
+      } else if (outcome.status === 'duplicate') {
+        result.duplicates++;
       }
     }
 
-    if (imported.length === 0) {
+    if (result.imported.length === 0 && result.duplicates === 0) {
       throw new Error('模型导入失败：未能从压缩包中提取出有效的 Spine 模型');
     }
 
-    const incomingIds = new Set<string>();
-    for (const item of imported) {
-      incomingIds.add(item.id);
-    }
-    const merged = new Array<SpineModelItem>();
-    for (const item of imported) {
-      merged.push(item);
-    }
-    for (const existing of this.models) {
-      if (!incomingIds.has(existing.id)) {
-        merged.push(existing);
+    if (result.imported.length > 0) {
+      const incomingIds = new Set<string>();
+      for (const item of result.imported) {
+        incomingIds.add(item.id);
       }
+      const merged = new Array<SpineModelItem>();
+      for (const item of result.imported) {
+        merged.push(item);
+      }
+      for (const existing of this.models) {
+        if (!incomingIds.has(existing.id)) {
+          merged.push(existing);
+        }
+      }
+      this.models = merged;
+      this.writeLibraryIndex(this.models);
     }
-    this.models = merged;
-    this.writeLibraryIndex(this.models);
-    return imported;
+    return result;
   }
 
-  /** 导入单个模型（一个骨架 + 最小依赖集）。失败返回 null。 */
-  private async importOneModel(skelFullPath: string, stagingDir: string, group: string): Promise<SpineModelItem | null> {
+  /** 导入单个模型（一个骨架 + 最小依赖集）。失败返回 failed，重复返回 duplicate。 */
+  private async importOneModel(skelFullPath: string, stagingDir: string, group: string,
+    seenHashes: Set<string>): Promise<ImportOneOutcome> {
+    const outcome = new ImportOneOutcome();
     try {
       const skelName = baseName(skelFullPath);
       const modelRoot = parentDir(skelFullPath);
@@ -369,13 +451,19 @@ export class SpineModelLibrary {
       const versionStr = spineVersionToString(detected.version);
       const formatStr = detected.format;
 
-      // 动画/皮肤名：JSON 直接读取；二进制用占位（加载后由 onModelLoaded 回填）
+      // 动画/皮肤名：JSON 直接读取；二进制 4.0/4.1/4.2 离线预解析（失败回退占位，加载后回填兜底）
       let animations = new Array<string>();
       let skins = new Array<string>();
       if (formatStr === 'JSON') {
         const peeked = peekAnimationsAndSkins(finalSkelPath);
         animations = peeked.animations;
         skins = peeked.skins;
+      } else if (versionStr === '4.0' || versionStr === '4.1' || versionStr === '4.2') {
+        const peeked = peekSkelBinaryFile(finalSkelPath, versionStr);
+        if (peeked !== null) {
+          animations = peeked.animations;
+          skins = peeked.skins;
+        }
       }
       if (animations.length === 0) {
         animations.push('idle');
@@ -400,11 +488,26 @@ export class SpineModelLibrary {
         console.error(`${TAG} write meta failed: ${JSON.stringify(err)}`);
       }
 
-      return new SpineModelItem(modelId, modelName, targetDir, skelName, atlasName,
-        animations, skins, versionStr, formatStr, Date.now(), group);
+      // 内容哈希判重（skel + atlas 字节 SHA-256）：命中即弃，未命中登记
+      const contentHash = await computeContentHash(finalSkelPath,
+        atlasName.length > 0 ? `${targetDir}/${atlasName}` : '');
+      if (contentHash.length > 0) {
+        if (seenHashes.has(contentHash)) {
+          deleteDirRecursive(targetDir);
+          outcome.status = 'duplicate';
+          return outcome;
+        }
+        seenHashes.add(contentHash);
+      }
+
+      const item = new SpineModelItem(modelId, modelName, targetDir, skelName, atlasName,
+        animations, skins, versionStr, formatStr, Date.now(), group, contentHash);
+      outcome.status = 'imported';
+      outcome.item = item;
+      return outcome;
     } catch (err) {
       console.error(`${TAG} importOneModel failed: ${JSON.stringify(err)}`);
-      return null;
+      return outcome;
     }
   }
 
@@ -445,6 +548,37 @@ export class SpineModelLibrary {
     target.group = group;
     this.rewriteMeta(target);
     this.writeLibraryIndex(this.models);
+  }
+
+  /**
+   * 重命名分组：目标名与既有分组冲突返回 false；成功时组内全部模型
+   * 的 group 替换并持久化（library.json + model_meta.json）。
+   */
+  async renameGroup(oldName: string, newName: string): Promise<boolean> {
+    const trimmed = newName.trim();
+    if (oldName.length === 0 || trimmed.length === 0) {
+      return false;
+    }
+    if (trimmed === oldName) {
+      return true;
+    }
+    for (const m of this.models) {
+      if (m.group === trimmed) {
+        return false;
+      }
+    }
+    let changed = false;
+    for (const m of this.models) {
+      if (m.group === oldName) {
+        m.group = trimmed;
+        this.rewriteMeta(m);
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.writeLibraryIndex(this.models);
+    }
+    return changed;
   }
 
   /** 解散分组：组内全部模型移入未分组（保留模型）。 */
@@ -582,8 +716,12 @@ export class SpineModelLibrary {
         if (typeof raw.group === 'string') {
           group = raw.group;
         }
+        let contentHash = '';
+        if (typeof raw.contentHash === 'string') {
+          contentHash = raw.contentHash;
+        }
         result.push(new SpineModelItem(raw.id, raw.name, raw.folderPath, raw.skelFile,
-          atlasFile, animations, skins, version, format, createdAt, group));
+          atlasFile, animations, skins, version, format, createdAt, group, contentHash));
       }
       return result;
     } catch (err) {
@@ -608,7 +746,8 @@ export class SpineModelLibrary {
           version: m.version,
           format: m.format,
           createdAt: m.createdAt,
-          group: m.group
+          group: m.group,
+          contentHash: m.contentHash
         };
         rawItems.push(raw);
       }
@@ -956,6 +1095,56 @@ function toObjectList(list: Array<string>): Array<Object> {
     result.push(obj);
   }
   return result;
+}
+
+// ==================== 内容哈希（重复导入判重） ====================
+
+/**
+ * 计算 skel + atlas 字节流的 SHA-256 hex（atlas 为空串时仅 skel）。
+ * 读取或摘要失败返回空串（调用方按未知哈希处理，不参与判重）。
+ */
+async function computeContentHash(skelPath: string, atlasPath: string): Promise<string> {
+  try {
+    const md = cryptoFramework.createMd('SHA256');
+    await hashUpdateFile(md, skelPath);
+    if (atlasPath.length > 0) {
+      await hashUpdateFile(md, atlasPath);
+    }
+    const digest = await md.digest();
+    return bytesToHex(digest.data);
+  } catch (err) {
+    console.error(`${TAG} computeContentHash failed: ${JSON.stringify(err)}`);
+    return '';
+  }
+}
+
+/** 流式读取文件并喂给摘要器（分块避免大 skel 一次性占内存）。 */
+async function hashUpdateFile(md: cryptoFramework.Md, path: string): Promise<void> {
+  const file = fileIo.openSync(path, fileIo.OpenMode.READ_ONLY);
+  try {
+    const buf = new ArrayBuffer(HASH_CHUNK_BYTES);
+    while (true) {
+      const nread = fileIo.readSync(file.fd, buf);
+      if (nread <= 0) {
+        break;
+      }
+      const chunk = new Uint8Array(buf, 0, nread);
+      await md.update({ data: chunk });
+    }
+  } finally {
+    fileIo.closeSync(file);
+  }
+}
+
+/** Uint8Array → 小写 hex 串。 */
+function bytesToHex(bytes: Uint8Array): string {
+  const HEX = '0123456789abcdef';
+  let out = '';
+  for (let i = 0; i < bytes.length; i++) {
+    out += HEX.charAt((bytes[i] >> 4) & 0x0F);
+    out += HEX.charAt(bytes[i] & 0x0F);
+  }
+  return out;
 }
 
 /** 全量写入文本文件（CREATE + TRUNC）。 */
