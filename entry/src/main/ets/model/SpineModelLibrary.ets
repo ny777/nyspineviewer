@@ -528,6 +528,17 @@ export class SpineModelLibrary {
     this.writeLibraryIndex(this.models);
   }
 
+  /** 批量删除：逐个串行删除，单个失败（如 IO 异常）继续下一个，不中断整批。 */
+  async deleteModels(ids: Array<string>): Promise<void> {
+    for (const id of ids) {
+      try {
+        await this.deleteModel(id);
+      } catch (err) {
+        // 单个失败继续删除其余
+      }
+    }
+  }
+
   /** 现有分组名列表（非空 group，按首现顺序）。 */
   getGroupNames(): Array<string> {
     const names = new Array<string>();

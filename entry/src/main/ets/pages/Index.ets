@@ -309,6 +309,9 @@ struct Index {
           },
           onRenameGroup: (group: string): void => {
             this.renameGroupAction(group);
+          },
+          onDeleteModels: (ids: Array<string>): void => {
+            this.deleteModelsAction(ids);
           }
         })
       }
@@ -867,6 +870,39 @@ struct Index {
       .catch((err: BusinessError): void => {
         this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_delete_fail') });
       });
+  }
+
+  /** 批量删除：确认弹窗 → 串行删除全部 → 逐个清理槽位。 */
+  private deleteModelsAction(ids: Array<string>): void {
+    const library = this.library;
+    if (library === null || ids.length === 0) {
+      return;
+    }
+    this.getUIContext().showAlertDialog({
+      message: $r('app.string.batch_delete_confirm', ids.length),
+      primaryButton: {
+        value: $r('app.string.dialog_cancel'),
+        action: (): void => {
+        }
+      },
+      secondaryButton: {
+        value: $r('app.string.dialog_delete'),
+        fontColor: this.theme().danger,
+        action: (): void => {
+          library.deleteModels(ids)
+            .then((): void => {
+              this.models = library.getModels();
+              for (const id of ids) {
+                this.cleanupSlotsForDeleted(id);
+              }
+              this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_deleted') });
+            })
+            .catch((err: BusinessError): void => {
+              this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_delete_fail') });
+            });
+        }
+      }
+    });
   }
 
   /** 模型被删除后清理其占用的槽位（偏好 + WebView 槽 + 面板 UI）。 */

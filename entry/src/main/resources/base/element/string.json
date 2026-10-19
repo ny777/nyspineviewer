@@ -419,6 +419,38 @@
     {
       "name": "toast_widget_updated",
       "value": "桌面卡片已更新"
+    },
+    {
+      "name": "collapse_all",
+      "value": "全部折叠"
+    },
+    {
+      "name": "expand_all",
+      "value": "全部展开"
+    },
+    {
+      "name": "batch_manage",
+      "value": "管理"
+    },
+    {
+      "name": "batch_done",
+      "value": "完成"
+    },
+    {
+      "name": "batch_select_all",
+      "value": "全选"
+    },
+    {
+      "name": "batch_selected_count",
+      "value": "已选 %d"
+    },
+    {
+      "name": "batch_delete",
+      "value": "删除"
+    },
+    {
+      "name": "batch_delete_confirm",
+      "value": "确定删除选中的 %d 个模型？删除后不可恢复"
     }
   ]
 }

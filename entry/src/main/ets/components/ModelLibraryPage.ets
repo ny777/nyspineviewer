@@ -1,6 +1,8 @@
 /**
- * 模型库页（HdsTabs 第二页）：导入 ZIP、分组列表（折叠 + 组操作菜单）、
- * 模型卡片（版本/格式徽章、分组快捷移动）、设为主/副模型、删除、空库三步引导卡。
+ * 模型库页（HdsTabs 第二页）：标题行 + 右上角导入（+ 图标 / 导入中取消胶囊）、
+ * 置顶搜索栏（清空 / 一键折叠全部 / 管理入口）、分组列表（折叠 + 组操作菜单）、
+ * 批量模式（勾选 + 工具栏：全选/已选/删除/完成）、模型卡片（版本/格式徽章、分组快捷移动）、
+ * 设为主/副模型、删除、空库三步引导卡。
  */
 import { SpineModelItem } from '../model/SpineModelItem';
 import { getTheme, ThemeColors } from '../core/Theme';
@@ -40,7 +42,13 @@ export struct ModelLibraryPage {
   };
   onRenameGroup: (group: string) => void = (group: string) => {
   };
+  onDeleteModels: (ids: Array<string>) => void = (ids: Array<string>) => {
+  };
   @State collapsedGroups: Array<string> = [];
+  /** 批量管理模式（勾选删除）。 */
+  @State batchMode: boolean = false;
+  /** 批量模式已勾选的模型 id。 */
+  @State selectedIds: Array<string> = [];
   /** 库内搜索关键字（名称/分组/版本/动画 substring 过滤）。 */
   @State searchQuery: string = '';
   @StorageProp('themeDark') themeDark: boolean = true;
@@ -104,27 +112,141 @@ export struct ModelLibraryPage {
     }
   }
 
+  /** 全部分组是否都处于折叠态。 */
+  private allGroupsCollapsed(): boolean {
+    const groups = this.buildGroups();
+    if (groups.length === 0) {
+      return true;
+    }
+    for (const g of groups) {
+      if (!this.isCollapsed(g.name)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** 一键折叠/展开全部分组：任一展开 → 全折叠；全折叠 → 全展开。 */
+  private toggleCollapseAll(): void {
+    if (this.allGroupsCollapsed()) {
+      this.collapsedGroups = [];
+      return;
+    }
+    const names = new Array<string>();
+    for (const g of this.buildGroups()) {
+      names.push(g.name);
+    }
+    this.collapsedGroups = names;
+  }
+
+  // ==================== 批量管理模式 ====================
+
+  private enterBatch(): void {
+    this.selectedIds = [];
+    this.batchMode = true;
+  }
+
+  private exitBatch(): void {
+    this.batchMode = false;
+    this.selectedIds = [];
+  }
+
+  private isSelected(modelId: string): boolean {
+    return this.selectedIds.indexOf(modelId) >= 0;
+  }
+
+  /** 当前过滤结果是否已全部勾选。 */
+  private isFilteredAllSelected(): boolean {
+    const filtered = this.filteredModels();
+    if (filtered.length === 0) {
+      return false;
+    }
+    for (const m of filtered) {
+      if (!this.isSelected(m.id)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** 全选/取消全选（仅作用于当前过滤结果）。 */
+  private toggleSelectAll(): void {
+    const filtered = this.filteredModels();
+    if (this.isFilteredAllSelected()) {
+      const remaining = new Array<string>();
+      for (const id of this.selectedIds) {
+        const stillVisible = filtered.some((m: SpineModelItem): boolean => m.id === id);
+        if (!stillVisible) {
+          remaining.push(id);
+        }
+      }
+      this.selectedIds = remaining;
+      return;
+    }
+    const next = this.selectedIds.slice();
+    for (const m of filtered) {
+      if (next.indexOf(m.id) < 0) {
+        next.push(m.id);
+      }
+    }
+    this.selectedIds = next;
+  }
+
+  private toggleSelect(modelId: string): void {
+    const idx = this.selectedIds.indexOf(modelId);
+    if (idx >= 0) {
+      this.selectedIds.splice(idx, 1);
+    } else {
+      this.selectedIds.push(modelId);
+    }
+  }
+
   build() {
     Column({ space: 12 }) {
-      Text($r('app.string.drawer_title'))
-        .fontSize(20)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(this.theme().text)
-        .width('100%')
+      Row() {
+        Text($r('app.string.drawer_title'))
+          .fontSize(20)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.theme().text)
+          .maxLines(1)
+          .layoutWeight(1)
 
-      Button(this.importing
-        ? (this.importProgress.length > 0
-          ? $r('app.string.cancel_import_progress', this.importProgress)
-          : $r('app.string.btn_cancel_import'))
-        : $r('app.string.import_model'))
-        .width('100%')
-        .backgroundColor(this.importing ? this.theme().danger : this.theme().importBtn)
-        .fontColor(Color.White)
-        .onClick(() => {
-          this.onImport();
-        })
+        if (!this.importing) {
+          Button() {
+            SymbolGlyph($r('sys.symbol.plus'))
+              .fontSize(18)
+              .fontColor([Color.White])
+          }
+          .width(38)
+          .height(38)
+          .borderRadius(19)
+          .backgroundColor(this.theme().importBtn)
+          .padding(0)
+          .accessibilityText($r('app.string.import_model'))
+          .onClick(() => {
+            this.onImport();
+          })
+        } else {
+          Button(this.importProgress.length > 0
+            ? $r('app.string.cancel_import_progress', this.importProgress)
+            : $r('app.string.btn_cancel_import'))
+            .height(38)
+            .borderRadius(19)
+            .padding({ left: 14, right: 14 })
+            .fontSize(13)
+            .backgroundColor(this.theme().danger)
+            .fontColor(Color.White)
+            .onClick(() => {
+              this.onImport();
+            })
+        }
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
 
-      if (this.models.length > 0) {
+      if (this.batchMode) {
+        this.BatchToolbar()
+      } else if (this.models.length > 0) {
         Row({ space: 8 }) {
           TextInput({ text: this.searchQuery, placeholder: $r('app.string.search_hint') })
             .layoutWeight(1)
@@ -152,6 +274,32 @@ export struct ModelLibraryPage {
               this.searchQuery = '';
             })
           }
+          Button() {
+            Text('⇕')
+              .fontSize(16)
+              .fontColor(this.theme().textSecondary)
+          }
+          .width(38)
+          .height(38)
+          .borderRadius(19)
+          .backgroundColor(this.theme().chip)
+          .padding(0)
+          .accessibilityText(this.allGroupsCollapsed()
+            ? $r('app.string.expand_all')
+            : $r('app.string.collapse_all'))
+          .onClick(() => {
+            this.toggleCollapseAll();
+          })
+          Button($r('app.string.batch_manage'))
+            .height(38)
+            .borderRadius(19)
+            .padding({ left: 14, right: 14 })
+            .fontSize(13)
+            .backgroundColor(this.theme().chip)
+            .fontColor(this.theme().text)
+            .onClick(() => {
+              this.enterBatch();
+            })
         }
         .width('100%')
         .alignItems(VerticalAlign.Center)
@@ -192,6 +340,63 @@ export struct ModelLibraryPage {
     .height('100%')
     .padding({ left: 16, right: 16, top: 16, bottom: 100 })
     .backgroundColor(this.theme().pageBg)
+  }
+
+  /** 批量模式工具栏：全选 | 已选 n | 删除 | 完成（替换搜索行）。 */
+  @Builder
+  BatchToolbar() {
+    Row({ space: 10 }) {
+      Row({ space: 6 }) {
+        Checkbox()
+          .select(this.isFilteredAllSelected())
+          .selectedColor(this.theme().cardSelected)
+          .width(20)
+          .height(20)
+          .hitTestBehavior(HitTestMode.None)
+        Text($r('app.string.batch_select_all'))
+          .fontSize(13)
+          .fontColor(this.theme().textSecondary)
+      }
+      .alignItems(VerticalAlign.Center)
+      .onClick(() => {
+        this.toggleSelectAll();
+      })
+
+      Text($r('app.string.batch_selected_count', this.selectedIds.length))
+        .fontSize(12)
+        .fontColor(this.theme().textMuted)
+        .maxLines(1)
+        .layoutWeight(1)
+
+      Button($r('app.string.batch_delete'))
+        .height(34)
+        .fontSize(13)
+        .padding({ left: 16, right: 16 })
+        .backgroundColor(this.theme().danger)
+        .fontColor(Color.White)
+        .enabled(this.selectedIds.length > 0)
+        .opacity(this.selectedIds.length > 0 ? 1 : 0.5)
+        .onClick(() => {
+          if (this.selectedIds.length === 0) {
+            return;
+          }
+          const ids = this.selectedIds.slice();
+          this.exitBatch();
+          this.onDeleteModels(ids);
+        })
+
+      Button($r('app.string.batch_done'))
+        .height(34)
+        .fontSize(13)
+        .padding({ left: 14, right: 14 })
+        .backgroundColor(this.theme().chip)
+        .fontColor(this.theme().text)
+        .onClick(() => {
+          this.exitBatch();
+        })
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
   }
 
   /** 空库三步引导卡：标题 + 三步说明 + 大号导入按钮。 */
@@ -332,6 +537,15 @@ export struct ModelLibraryPage {
   ModelCard(model: SpineModelItem) {
     Column({ space: 10 }) {
       Row() {
+        if (this.batchMode) {
+          Checkbox()
+            .select(this.isSelected(model.id))
+            .selectedColor(this.theme().cardSelected)
+            .width(20)
+            .height(20)
+            .margin({ top: 2 })
+            .hitTestBehavior(HitTestMode.None)
+        }
         Column({ space: 4 }) {
           Text(model.name)
             .fontSize(15)
@@ -370,7 +584,9 @@ export struct ModelLibraryPage {
               .textOverflow({ overflow: TextOverflow.Ellipsis })
               .constraintSize({ maxWidth: 96 })
               .onClick(() => {
-                this.onMoveToGroup(model.id);
+                if (!this.batchMode) {
+                  this.onMoveToGroup(model.id);
+                }
               })
           }
           .alignItems(VerticalAlign.Center)
@@ -378,42 +594,55 @@ export struct ModelLibraryPage {
         .alignItems(HorizontalAlign.Start)
         .layoutWeight(1)
 
-        Text('✕')
-          .fontSize(16)
-          .fontColor(this.theme().textSecondary)
-          .padding(6)
-          .onClick(() => {
-            this.onDelete(model.id);
-          })
+        if (!this.batchMode) {
+          Text('✕')
+            .fontSize(16)
+            .fontColor(this.theme().textSecondary)
+            .padding(6)
+            .onClick(() => {
+              this.onDelete(model.id);
+            })
+        }
       }
       .width('100%')
       .alignItems(VerticalAlign.Top)
 
-      Row({ space: 8 }) {
-        Button($r('app.string.set_main'))
-          .layoutWeight(1)
-          .fontSize(12)
-          .height(32)
-          .backgroundColor(model.id === this.mainModelId ? this.theme().cardSelected : this.theme().chip)
-          .fontColor(model.id === this.mainModelId ? Color.White : this.theme().textSecondary)
-          .onClick(() => {
-            this.onSelectMain(model.id);
-          })
-        Button($r('app.string.set_sub'))
-          .layoutWeight(1)
-          .fontSize(12)
-          .height(32)
-          .backgroundColor(model.id === this.subModelId ? this.theme().cardSelected : this.theme().chip)
-          .fontColor(model.id === this.subModelId ? Color.White : this.theme().textSecondary)
-          .onClick(() => {
-            this.onSelectSub(model.id);
-          })
+      if (!this.batchMode) {
+        Row({ space: 8 }) {
+          Button($r('app.string.set_main'))
+            .layoutWeight(1)
+            .fontSize(12)
+            .height(32)
+            .backgroundColor(model.id === this.mainModelId ? this.theme().cardSelected : this.theme().chip)
+            .fontColor(model.id === this.mainModelId ? Color.White : this.theme().textSecondary)
+            .onClick(() => {
+              this.onSelectMain(model.id);
+            })
+          Button($r('app.string.set_sub'))
+            .layoutWeight(1)
+            .fontSize(12)
+            .height(32)
+            .backgroundColor(model.id === this.subModelId ? this.theme().cardSelected : this.theme().chip)
+            .fontColor(model.id === this.subModelId ? Color.White : this.theme().textSecondary)
+            .onClick(() => {
+              this.onSelectSub(model.id);
+            })
+        }
+        .width('100%')
       }
-      .width('100%')
     }
     .padding(12)
     .borderRadius(12)
     .backgroundColor(this.theme().card)
+    .border({
+      width: 2,
+      color: this.batchMode && this.isSelected(model.id) ? this.theme().cardSelected : Color.Transparent
+    })
     .width('100%')
+    .onClick(() => {
+      if (this.batchMode) {
+        this.toggleSelect(model.id);
+      }
+    })
   }
 }
