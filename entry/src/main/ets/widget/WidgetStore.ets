@@ -146,7 +146,7 @@ export class WidgetUpdater {
       const formImages: Record<string, number> = { 'snapshot': file.fd };
       const data: Record<string, Object> = {
         'title': title,
-        'imgSrc': 'snapshot',
+        'imgSrc': 'memory://snapshot',
         'formImages': formImages
       };
       return new WidgetSnapshotData(formBindingData.createFormBindingData(data), file.fd);
