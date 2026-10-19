@@ -21,6 +21,7 @@ import {
 } from '../core/BridgeProtocol';
 import { SpineModelLibrary } from '../model/SpineModelLibrary';
 import { SpineModelItem } from '../model/SpineModelItem';
+import { sanitizeAtlas } from '../model/AtlasSanitizer';
 import { SpineWebView, SpineBridgeProxy } from '../components/SpineWebView';
 import { ModelDrawer } from '../components/ModelDrawer';
 import { ControlBar } from '../components/ControlBar';
@@ -294,8 +295,8 @@ struct Index {
     });
   }
 
-  /** 按当前状态加载指定槽位模型（含动画/皮肤/变换/PMA 期望值下发）。 */
-  private loadSlotModel(slot: number): void {
+  /** 按当前状态加载指定槽位模型（含图集修复/动画/皮肤/变换/PMA 期望值下发）。 */
+  private async loadSlotModel(slot: number): Promise<void> {
     const prefs = this.prefs;
     const library = this.library;
     if (prefs === null || library === null) {
@@ -311,13 +312,26 @@ struct Index {
       this.sendCommand({ cmd: BridgeCmdNames.CLEAR_SLOT, slot: slot });
       return;
     }
+    // 图集清理与尺寸校正（对齐 Android 加载时 sanitize + 缓存）
+    let atlasFile = model.atlasFile;
+    if (atlasFile.length > 0) {
+      const sanitized = await sanitizeAtlas(model.atlasPath());
+      atlasFile = sanitized.atlasFile;
+      hilog.info(LOG_DOMAIN, TAG, 'atlas sanitized slot=%{public}d file=%{public}s fromCache=%{public}s',
+        slot, sanitized.atlasFile, String(sanitized.fromCache));
+    }
+    // sanitize 为异步操作，期间模型选择可能已变化：过期加载直接丢弃
+    const currentId = slot === 0 ? this.mainModelId : this.subModelId;
+    if (currentId !== modelId) {
+      return;
+    }
     const ui = this.slotUi[slot];
     this.sendCommand({
       cmd: BridgeCmdNames.LOAD_MODEL,
       slot: slot,
       modelId: model.id,
       skelFile: model.skelFile,
-      atlasFile: model.atlasFile,
+      atlasFile: atlasFile,
       version: model.version,
       pma: ui.pma
     });

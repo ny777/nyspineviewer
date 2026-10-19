@@ -1,5 +1,5 @@
 /**
- * Spine 播放宿主（ArkWeb ↔ spine-ts 4.1）。
+ * Spine 播放宿主（ArkWeb ↔ spine-ts 多版本运行时 4.0 / 4.1 / 4.2）。
  *
  * 行为蓝本（SpineV41Adapter.kt / SpineGlRenderer.kt）：
  *  - AnimationStateData.defaultMix = 0.2
@@ -109,7 +109,7 @@
     }));
   }
 
-  // ==================== 运行时加载（版本分发器，本期仅 4.1 可用） ====================
+  // ==================== 运行时加载（版本分发器，支持 4.0 / 4.1 / 4.2） ====================
 
   function ensureRuntime(version) {
     return new Promise(function (resolve, reject) {
