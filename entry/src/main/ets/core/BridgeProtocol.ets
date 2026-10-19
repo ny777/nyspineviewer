@@ -15,6 +15,10 @@ export interface BridgeCommand {
   /** Spine 短版本串，如 "4.1"，用于选择 runtime bundle。 */
   version?: string;
   pma?: boolean;
+  /** config.json scale：Spine 加载器缩放（loadModel 专用）。 */
+  configScale?: number;
+  /** config.json idle_motion：加载完成后的动作兜底（loadModel 专用）。 */
+  idleMotion?: string;
   name?: string;
   loop?: boolean;
   /** 多选皮肤：首项为基底，其余叠加。 */

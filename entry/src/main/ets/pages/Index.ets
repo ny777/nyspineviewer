@@ -325,6 +325,12 @@ struct Index {
     if (currentId !== modelId) {
       return;
     }
+    // config.json 接线（对齐 Android）：scale 作为 Spine 加载器缩放传入 Web 侧
+    const config = library.readModelConfig(model);
+    if (config !== null) {
+      hilog.info(LOG_DOMAIN, TAG, 'config.json slot=%{public}d scale=%{public}s idle_motion=%{public}s',
+        slot, String(config.scale), config.idle_motion);
+    }
     const ui = this.slotUi[slot];
     this.sendCommand({
       cmd: BridgeCmdNames.LOAD_MODEL,
@@ -333,7 +339,9 @@ struct Index {
       skelFile: model.skelFile,
       atlasFile: atlasFile,
       version: model.version,
-      pma: ui.pma
+      pma: ui.pma,
+      configScale: config !== null ? config.scale : 1,
+      idleMotion: config !== null ? config.idle_motion : ''
     });
     if (ui.currentAnimation.length > 0) {
       this.sendCommand({ cmd: BridgeCmdNames.PLAY_ANIMATION, slot: slot, name: ui.currentAnimation, loop: true });
@@ -361,7 +369,21 @@ struct Index {
     const animations = model !== null ? model.animations : [];
     const skins = model !== null ? model.skins : [];
     const savedAnim = prefs.getString(SlotPrefs.animationKey(slot), '');
-    const currentAnimation = savedAnim.length > 0 ? savedAnim : (animations.length > 0 ? animations[0] : '');
+    const config = model !== null ? library.readModelConfig(model) : null;
+    const idleMotion = config !== null ? config.idle_motion : '';
+    // 动作链（对齐 Android）：上层期望（偏好）> config.idle_motion > 第一个动作。
+    // 二进制（SKEL）模型导入时 animations 是占位 ['idle']，不能用于链解析：
+    // 留空交给 Web 侧用真实动画名解析（desired > idle_motion > first）并回报同步。
+    const metaTrusted = model !== null &&
+      (model.format === 'JSON' || !(animations.length === 1 && animations[0] === 'idle'));
+    let currentAnimation = '';
+    if (savedAnim.length > 0 && metaTrusted && animations.includes(savedAnim)) {
+      currentAnimation = savedAnim;
+    } else if (idleMotion.length > 0 && metaTrusted && animations.includes(idleMotion)) {
+      currentAnimation = idleMotion;
+    } else if (metaTrusted && animations.length > 0) {
+      currentAnimation = animations[0];
+    }
     const selectedSkins = prefs.getSelectedSkins(SlotPrefs.skinsJsonKey(slot), '');
     const effectiveSkins = selectedSkins.length > 0 ? selectedSkins : (skins.length > 0 ? [skins[0]] : []);
     const pma = prefs.getBool(SlotPrefs.pmaKey(slot), true);
@@ -400,7 +422,10 @@ struct Index {
     this.updateSlotUi(event.slot, (state: SlotUiState): void => {
       state.animations = event.animations;
       state.skins = event.skins;
-      if (!event.animations.includes(state.currentAnimation) && event.animations.length > 0) {
+      // 空值留给 Web 侧兜底链（idle_motion/first）经 onAnimationChanged 回报同步；
+      // 仅校正非空但已不存在的期望动作
+      if (state.currentAnimation.length > 0 && !event.animations.includes(state.currentAnimation) &&
+        event.animations.length > 0) {
         state.currentAnimation = event.animations[0];
       }
       const kept = state.selectedSkins.filter((name: string): boolean => event.skins.includes(name));

@@ -48,6 +48,8 @@
     this.skelFile = '';
     this.atlasFile = '';
     this.pma = true;
+    this.configScale = 1; // config.json scale：Spine 加载器缩放（非用户变换缩放）
+    this.idleMotion = ''; // config.json idle_motion：加载完成后的动作兜底链（对应 Android 渲染器链）
     this.skeleton = null;
     this.skeletonData = null;
     this.state = null;
@@ -201,6 +203,9 @@
     slot.skelFile = String(msg.skelFile || '');
     slot.atlasFile = String(msg.atlasFile || '');
     slot.pma = !!msg.pma;
+    slot.configScale = (typeof msg.configScale === 'number' && isFinite(msg.configScale) && msg.configScale > 0)
+      ? msg.configScale : 1;
+    slot.idleMotion = typeof msg.idleMotion === 'string' ? msg.idleMotion : '';
 
     if (!slot.modelId || !slot.skelFile || !slot.atlasFile) {
       slot.status = 'error';
@@ -233,11 +238,13 @@
         if (isJson) {
           return fetchText(modelUrl(slot.modelId, slot.skelFile)).then(function (text) {
             var jsonReader = new spine.SkeletonJson(attachmentLoader);
+            jsonReader.scale = slot.configScale;
             return jsonReader.readSkeletonData(text);
           });
         }
         return fetchArrayBuffer(modelUrl(slot.modelId, slot.skelFile)).then(function (buf) {
           var binaryReader = new spine.SkeletonBinary(attachmentLoader);
+          binaryReader.scale = slot.configScale;
           return binaryReader.readSkeletonData(new Uint8Array(buf));
         });
       }).then(function (skeletonData) {
@@ -256,6 +263,31 @@
           (skeletonData.animations ? skeletonData.animations.length : 0) +
           ' skins=' + (skeletonData.skins ? skeletonData.skins.length : 0));
         applyDesired(slotIdx);
+        // 动作兜底链（对齐 Android 渲染器）：上层指定（desired）> config.idle_motion > 第一个动作。
+        // 二进制模型导入时 meta 是占位值，ArkTS 不下发动作，由这里用真实动画名解析后回报同步。
+        if (!slot.currentAnimationName && skeletonData.animations && skeletonData.animations.length > 0) {
+          var anims0 = skeletonData.animations;
+          var chosen = '';
+          var k;
+          if (slot.idleMotion) {
+            for (k = 0; k < anims0.length; k++) {
+              if (anims0[k].name === slot.idleMotion) {
+                chosen = slot.idleMotion;
+                break;
+              }
+            }
+          }
+          if (!chosen) {
+            chosen = anims0[0].name;
+          }
+          slot.desired.animation = chosen;
+          slot.desired.loop = true;
+          playAnimationInternal(slotIdx, chosen, true, true);
+          bridgeCall('onAnimationChanged', JSON.stringify({
+            slot: slotIdx,
+            name: chosen
+          }));
+        }
         notifyModelLoaded(slotIdx, slot.modelId, skeletonData);
         renderFrame(0); // 立即出画面，不等下一帧
       });

@@ -11,6 +11,7 @@ import { Context } from '@kit.AbilityKit';
 import { SpineModelItem } from './SpineModelItem';
 import { detectSpineVersion } from '../core/SpineVersionDetector';
 import { spineVersionToString } from '../core/SpineVersion';
+import { Live2DConfig, parseLive2DConfig } from './Live2DConfig';
 
 const TAG = 'SpineModelLibrary';
 
@@ -103,6 +104,25 @@ export class SpineModelLibrary {
       if (m.id === modelId) {
         return m;
       }
+    }
+    return null;
+  }
+
+  /**
+   * 读取模型目录下 config（Live2DViewerEX 风格，对齐 Android 加载侧规则：
+   * 目录内第一个以 .config.json 结尾的文件，大小写不敏感）。
+   * 不存在或解析失败返回 null（调用方按「无 config」处理）。
+   */
+  readModelConfig(model: SpineModelItem): Live2DConfig | null {
+    try {
+      const names = fileIo.listFileSync(model.folderPath);
+      for (const name of names) {
+        if (name.toLowerCase().endsWith('.config.json')) {
+          return parseLive2DConfig(fileIo.readTextSync(`${model.folderPath}/${name}`));
+        }
+      }
+    } catch (err) {
+      return null;
     }
     return null;
   }
