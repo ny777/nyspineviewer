@@ -26,6 +26,12 @@ export struct ModelLibraryPage {
   @Prop importing: boolean = false;
   /** 批量导入进度（"done/total"，空串表示无进度）。 */
   @Prop importProgress: string = '';
+  /** 缩略图补全管线运行中（横幅显示进度）。 */
+  @Prop thumbGenerating: boolean = false;
+  @Prop thumbGenCurrent: number = 0;
+  @Prop thumbGenTotal: number = 0;
+  onGenerateThumbs: (ids: Array<string>) => void = (ids: Array<string>) => {
+  };
   onImport: () => void = () => {
   };
   onSelectMain: (modelId: string) => void = (modelId: string) => {
@@ -51,6 +57,8 @@ export struct ModelLibraryPage {
   @State selectedIds: Array<string> = [];
   /** 库内搜索关键字（名称/分组/版本/动画 substring 过滤）。 */
   @State searchQuery: string = '';
+  /** 缺图横幅本次会话是否已忽略。 */
+  @State thumbBannerDismissed: boolean = false;
   @StorageProp('themeDark') themeDark: boolean = true;
 
   private theme(): ThemeColors {
@@ -205,6 +213,17 @@ export struct ModelLibraryPage {
     }
   }
 
+  /** 缺少缩略图且可渲染的模型（横幅计数与生成入参）。 */
+  private modelsMissingThumb(): Array<SpineModelItem> {
+    const result = new Array<SpineModelItem>();
+    for (const m of this.models) {
+      if (!m.hasThumb && m.isSupported()) {
+        result.push(m);
+      }
+    }
+    return result;
+  }
+
   build() {
     Column({ space: 12 }) {
       Row() {
@@ -307,6 +326,11 @@ export struct ModelLibraryPage {
         }
         .width('100%')
         .alignItems(VerticalAlign.Center)
+      }
+
+      if (!this.batchMode &&
+        (this.thumbGenerating || (!this.thumbBannerDismissed && this.modelsMissingThumb().length > 0))) {
+        this.ThumbBanner()
       }
 
       if (this.models.length === 0) {
@@ -414,6 +438,58 @@ export struct ModelLibraryPage {
         })
     }
     .width('100%')
+    .alignItems(VerticalAlign.Center)
+  }
+
+  /** 缺图补全横幅：缺 N 个 → 生成/忽略；生成中 → 进度文本。 */
+  @Builder
+  ThumbBanner() {
+    Row({ space: 8 }) {
+      if (this.thumbGenerating) {
+        Text($r('app.string.thumb_generating', this.thumbGenCurrent, this.thumbGenTotal))
+          .fontSize(12)
+          .fontColor(this.theme().textSecondary)
+          .layoutWeight(1)
+          .maxLines(1)
+      } else {
+        Text($r('app.string.thumb_banner_text', this.modelsMissingThumb().length))
+          .fontSize(12)
+          .fontColor(this.theme().textSecondary)
+          .layoutWeight(1)
+          .maxLines(1)
+        Button($r('app.string.thumb_banner_generate'))
+          .height(28)
+          .fontSize(12)
+          .padding({ left: 14, right: 14 })
+          .backgroundColor(this.theme().importBtn)
+          .fontColor(Color.White)
+          .onClick(() => {
+            const ids = new Array<string>();
+            for (const m of this.modelsMissingThumb()) {
+              ids.push(m.id);
+            }
+            this.onGenerateThumbs(ids);
+          })
+        Button() {
+          SymbolGlyph($r('sys.symbol.xmark'))
+            .fontSize(12)
+            .fontColor([this.theme().textSecondary])
+        }
+        .width(28)
+        .height(28)
+        .borderRadius(14)
+        .backgroundColor(this.theme().chip)
+        .padding(0)
+        .accessibilityText($r('app.string.search_clear'))
+        .onClick(() => {
+          this.thumbBannerDismissed = true;
+        })
+      }
+    }
+    .width('100%')
+    .padding({ left: 12, right: 12, top: 8, bottom: 8 })
+    .borderRadius(10)
+    .backgroundColor(this.theme().card)
     .alignItems(VerticalAlign.Center)
   }
 
@@ -545,24 +621,60 @@ export struct ModelLibraryPage {
         }
         .width('100%')
         .alignItems(VerticalAlign.Top)
-      }, (pair: Array<SpineModelItem>) => `${pair[0].id}::${pair.length}`)
+      }, (pair: Array<SpineModelItem>) => {
+        // key 含 hasThumb：缩略图落盘后强制重建卡片项（ForEach 同 key 不重渲染）
+        let key = `${pair[0].id}::${pair[0].hasThumb ? 1 : 0}::${pair.length}`;
+        if (pair.length > 1) {
+          key += `::${pair[1].hasThumb ? 1 : 0}`;
+        }
+        return key;
+      })
     }
     .width('100%')
+  }
+
+  /** 卡片缩略图（64x84 圆角 8）：有图显示 file 图，无图占位；批量勾选叠加左上角。 */
+  @Builder
+  ThumbImage(model: SpineModelItem) {
+    Stack({ alignContent: Alignment.TopStart }) {
+      if (model.hasThumb) {
+        Image(`file://${getContext(this).filesDir}/thumbs/${model.id}.png`)
+          .width(64)
+          .height(84)
+          .borderRadius(8)
+          .objectFit(ImageFit.Cover)
+          .draggable(false)
+          .interpolation(ImageInterpolation.Medium)
+      } else {
+        Column() {
+          SymbolGlyph($r('sys.symbol.person'))
+            .fontSize(22)
+            .fontColor([this.theme().textMuted])
+        }
+        .width(64)
+        .height(84)
+        .borderRadius(8)
+        .backgroundColor(this.theme().chip)
+        .justifyContent(FlexAlign.Center)
+      }
+      if (this.batchMode) {
+        Checkbox()
+          .select(this.isSelected(model.id))
+          .selectedColor(this.theme().cardSelected)
+          .width(18)
+          .height(18)
+          .margin(4)
+          .hitTestBehavior(HitTestMode.None)
+      }
+    }
+    .width(64)
   }
 
   @Builder
   ModelCard(model: SpineModelItem) {
     Column({ space: 10 }) {
-      Row() {
-        if (this.batchMode) {
-          Checkbox()
-            .select(this.isSelected(model.id))
-            .selectedColor(this.theme().cardSelected)
-            .width(20)
-            .height(20)
-            .margin({ top: 2 })
-            .hitTestBehavior(HitTestMode.None)
-        }
+      Row({ space: 10 }) {
+        this.ThumbImage(model)
         Column({ space: 4 }) {
           Text(model.name)
             .fontSize(15)

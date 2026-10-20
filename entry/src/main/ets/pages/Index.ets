@@ -34,15 +34,21 @@ import { GroupPickerDialog } from '../components/GroupPickerDialog';
 import { GroupDeleteDialog } from '../components/GroupDeleteDialog';
 import { RenameGroupDialog } from '../components/RenameGroupDialog';
 import { FrameExporter } from '../capture/FrameExporter';
+import { ThumbStore } from '../capture/ThumbStore';
 import { WidgetFormsStore, WidgetSnapshotStore, WidgetUpdater } from '../widget/WidgetStore';
 
 const CAPTURE_TIMEOUT_MS = 15000;
 /** 模型加载后延时截帧更新卡片（等首帧稳定）。 */
 const WIDGET_CAPTURE_DELAY_MS = 800;
-/** 截帧用途：保存到图库 / 自动更新卡片 / 手动更新卡片。 */
+/** 截帧用途：保存到图库 / 自动更新卡片 / 手动更新卡片 / 缩略图管线。 */
 const CAPTURE_PURPOSE_GALLERY = 'gallery';
 const CAPTURE_PURPOSE_WIDGET = 'widget';
 const CAPTURE_PURPOSE_WIDGET_MANUAL = 'widget-manual';
+const CAPTURE_PURPOSE_THUMB = 'thumb';
+/** 缩略图管线：单模型加载等待上限（MODEL_READY 未回传则跳过）。 */
+const THUMB_MODEL_TIMEOUT_MS = 4000;
+/** 缩略图管线：模型就绪后的稳帧等待。 */
+const THUMB_SETTLE_MS = 400;
 const LOG_DOMAIN = 0x0031;
 const TAG = 'SpineIndex';
 /** 收藏颜色默认列表（ARGB 十六进制，HdsColorPicker 收藏夹）。 */
@@ -115,6 +121,15 @@ struct Index {
   @State capturing: boolean = false;
   /** 沉浸模式：控制条收起状态（内存态，每次启动默认显示）。 */
   @State controlBarVisible: boolean = true;
+  /** 缩略图补全管线运行中（抑制 widget 自动截帧）。 */
+  @State thumbGenerating: boolean = false;
+  /** 缩略图管线进度（横幅显示用）。 */
+  @State thumbGenCurrent: number = 0;
+  @State thumbGenTotal: number = 0;
+  /** 当前截帧所属缩略图模型 id（purpose 为 thumb 时有效）。 */
+  private pendingThumbModelId: string = '';
+  /** 缩略图截帧结果桥（Promise resolve，管线串行等待）。 */
+  private thumbCaptureResolve: ((ok: boolean) => void) | null = null;
   /** 主模型加载遮罩（LOAD_MODEL 发出 → onModelLoaded/onError）。 */
   @State modelLoading: boolean = false;
   @State mainModelId: string = '';
@@ -160,7 +175,8 @@ struct Index {
 
     this.prefs = await PrefsManager.getInstance(context);
     this.library = SpineModelLibrary.getInstance(context);
-    this.models = await this.library.loadModels();
+    await this.library.loadModels();
+    this.reloadModels();
 
     const prefs = this.prefs;
     this.mainModelId = prefs.getString(PrefsKeys.ACTIVE_MODEL_ID, '');
@@ -310,6 +326,12 @@ struct Index {
           subModelId: this.subModelId,
           importing: this.importing,
           importProgress: this.importProgress,
+          thumbGenerating: this.thumbGenerating,
+          thumbGenCurrent: this.thumbGenCurrent,
+          thumbGenTotal: this.thumbGenTotal,
+          onGenerateThumbs: (ids: Array<string>): void => {
+            this.generateThumbs(ids);
+          },
           onImport: (): void => {
             this.importModels();
           },
@@ -584,7 +606,7 @@ struct Index {
     }
     if (this.library !== null) {
       this.library.updateModelAnimSkins(event.modelId, event.animations, event.skins);
-      this.models = this.library.getModels();
+      this.reloadModels();
     }
     this.updateSlotUi(event.slot, (state: SlotUiState): void => {
       state.animations = event.animations;
@@ -626,6 +648,9 @@ struct Index {
     if (event.code === 'CAPTURE_ERROR') {
       this.capturing = false;
       this.clearCaptureTimer();
+      if (this.capturePurpose === CAPTURE_PURPOSE_THUMB) {
+        this.resolveThumbCapture(false);
+      }
     }
     this.getUIContext().getPromptAction().showToast({ message: event.message, duration: 2500 });
   }
@@ -688,6 +713,21 @@ struct Index {
     const base64 = this.captureChunks.join('');
     this.captureChunks = [];
     this.captureTotal = 0;
+    if (this.capturePurpose === CAPTURE_PURPOSE_THUMB) {
+      const thumbId = this.pendingThumbModelId;
+      const context: Context = getContext(this);
+      ThumbStore.saveThumb(context, base64, thumbId)
+        .then((): void => {
+          this.capturing = false;
+          this.markThumbGenerated(thumbId);
+          this.resolveThumbCapture(true);
+        })
+        .catch((err: BusinessError): void => {
+          this.capturing = false;
+          this.resolveThumbCapture(false);
+        });
+      return;
+    }
     if (this.capturePurpose === CAPTURE_PURPOSE_WIDGET ||
       this.capturePurpose === CAPTURE_PURPOSE_WIDGET_MANUAL) {
       this.saveWidgetSnapshot(base64, this.capturePurpose === CAPTURE_PURPOSE_WIDGET_MANUAL);
@@ -769,8 +809,12 @@ struct Index {
           this.importProgress = `${done}/${total}`;
         },
         (): boolean => this.cancelImportRequested);
-      this.models = library.getModels();
+      this.reloadModels();
       this.showImportResultToast(result);
+      if (result.importedIds.length > 0) {
+        // 导入钩子：新导入模型自动补缩略图（管线串行，完成后恢复主模型）
+        this.generateThumbs(result.importedIds);
+      }
       if (this.mainModelId.length === 0 && result.firstImportedId.length > 0) {
         this.applyModelSelection(0, result.firstImportedId);
       }
@@ -887,7 +931,8 @@ struct Index {
     }
     library.deleteModel(modelId)
       .then((): void => {
-        this.models = library.getModels();
+        ThumbStore.deleteThumb(getContext(this), modelId);
+        this.reloadModels();
         this.cleanupSlotsForDeleted(modelId);
         this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_deleted') });
       })
@@ -904,7 +949,11 @@ struct Index {
     }
     library.deleteModels(ids)
       .then((): void => {
-        this.models = library.getModels();
+        const context: Context = getContext(this);
+        for (const id of ids) {
+          ThumbStore.deleteThumb(context, id);
+        }
+        this.reloadModels();
         for (const id of ids) {
           this.cleanupSlotsForDeleted(id);
         }
@@ -955,7 +1004,7 @@ struct Index {
         confirm: (group: string): void => {
           library.setModelGroup(modelId, group)
             .then((): void => {
-              this.models = library.getModels();
+              this.reloadModels();
             })
             .catch((): void => {
               this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_group_update_fail') });
@@ -979,7 +1028,7 @@ struct Index {
         confirm: (newName: string): void => {
           library.renameGroup(group, newName)
             .then((ok: boolean): void => {
-              this.models = library.getModels();
+              this.reloadModels();
               if (!ok) {
                 this.getUIContext().getPromptAction().showToast({
                   message: $r('app.string.toast_group_rename_exists')
@@ -1016,7 +1065,7 @@ struct Index {
         action: (): void => {
           library.dissolveGroup(group)
             .then((): void => {
-              this.models = library.getModels();
+              this.reloadModels();
               this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_group_dissolved') });
             });
         }
@@ -1036,7 +1085,13 @@ struct Index {
         confirm: (deleteModels: boolean): void => {
           library.deleteGroup(group, deleteModels)
             .then((deletedIds: Array<string>): void => {
-              this.models = library.getModels();
+              if (deleteModels) {
+                const context: Context = getContext(this);
+                for (const id of deletedIds) {
+                  ThumbStore.deleteThumb(context, id);
+                }
+              }
+              this.reloadModels();
               for (const id of deletedIds) {
                 this.cleanupSlotsForDeleted(id);
               }
@@ -1324,7 +1379,11 @@ struct Index {
     this.captureTimerId = setTimeout((): void => {
       if (this.capturing) {
         this.capturing = false;
-        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_capture_fail') });
+        if (this.capturePurpose === CAPTURE_PURPOSE_THUMB) {
+          this.resolveThumbCapture(false);
+        } else {
+          this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_capture_fail') });
+        }
       }
     }, CAPTURE_TIMEOUT_MS);
   }
@@ -1354,7 +1413,7 @@ struct Index {
     this.clearWidgetTimer();
     this.widgetCaptureTimerId = setTimeout((): void => {
       this.widgetCaptureTimerId = -1;
-      if (!this.widgetAutoUpdate || this.capturing || !this.webReady) {
+      if (!this.widgetAutoUpdate || this.thumbGenerating || this.capturing || !this.webReady) {
         return;
       }
       const ids = WidgetFormsStore.readFormIds(getContext(this));
@@ -1371,6 +1430,172 @@ struct Index {
     }
   }
 
+  // ==================== 模型缩略图 ====================
+
+  /** 从库刷新模型列表并同步缩略图标志（所有库变更后的统一入口）。 */
+  private reloadModels(): void {
+    const library = this.library;
+    if (library === null) {
+      return;
+    }
+    const context: Context = getContext(this);
+    const models = library.getModels();
+    for (const m of models) {
+      m.hasThumb = ThumbStore.hasThumb(context, m.id);
+    }
+    this.models = models;
+  }
+
+  /** 单个模型缩略图落盘后置位标志（数组重赋值触发刷新）。 */
+  private markThumbGenerated(modelId: string): void {
+    let changed = false;
+    for (const m of this.models) {
+      if (m.id === modelId && !m.hasThumb) {
+        m.hasThumb = true;
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.models = this.models.slice();
+    }
+  }
+
+  private resolveThumbCapture(ok: boolean): void {
+    const r = this.thumbCaptureResolve;
+    this.thumbCaptureResolve = null;
+    if (r !== null) {
+      r(ok);
+    }
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise<void>((resolve: (v: void) => void) => {
+      setTimeout(resolve, ms);
+    });
+  }
+
+  /** 轮询等待条件成立（100ms 间隔，超时返回 false）。 */
+  private waitUntil(cond: () => boolean, timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    return new Promise<boolean>((resolve: (ok: boolean) => void) => {
+      const check = (): void => {
+        if (cond()) {
+          resolve(true);
+        } else if (Date.now() > deadline) {
+          resolve(false);
+        } else {
+          setTimeout(check, 100);
+        }
+      };
+      setTimeout(check, 100);
+    });
+  }
+
+  /** 缩略图管线专用加载：LOAD_MODEL 到槽 0，不写偏好、不改 mainModelId。 */
+  private async loadModelForThumb(model: SpineModelItem): Promise<void> {
+    const library = this.library;
+    if (library === null) {
+      return;
+    }
+    let atlasFile = model.atlasFile;
+    if (atlasFile.length > 0) {
+      const sanitized = await sanitizeAtlas(model.atlasPath());
+      atlasFile = sanitized.atlasFile;
+    }
+    const config = library.readModelConfig(model);
+    this.modelLoading = true;
+    this.sendCommand({
+      cmd: BridgeCmdNames.LOAD_MODEL,
+      slot: 0,
+      modelId: model.id,
+      skelFile: model.skelFile,
+      atlasFile: atlasFile,
+      version: model.version,
+      pma: this.slotUi[0].pma,
+      configScale: config !== null ? config.scale : 1,
+      idleMotion: config !== null ? config.idle_motion : ''
+    });
+    this.sendCommand({ cmd: BridgeCmdNames.SET_TRANSFORM, slot: 0, scale: 1, x: 0, y: 0 });
+  }
+
+  /** 收集缺少缩略图且可渲染的模型 id 并启动补全管线。 */
+  private startThumbGenerationForMissing(): void {
+    if (this.thumbGenerating) {
+      return;
+    }
+    const ids = new Array<string>();
+    for (const m of this.models) {
+      if (!m.hasThumb && m.isSupported()) {
+        ids.push(m.id);
+      }
+    }
+    if (ids.length > 0) {
+      this.generateThumbs(ids);
+    }
+  }
+
+  /**
+   * 串行生成缩略图：逐个加载到槽 0 → 稳帧 → 截帧存缩略图，完成后恢复主模型。
+   * 运行期间抑制 widget 自动截帧（scheduleWidgetCapture guard）。
+   */
+  private async generateThumbs(ids: Array<string>): Promise<void> {
+    const library = this.library;
+    if (library === null || this.thumbGenerating || ids.length === 0) {
+      return;
+    }
+    this.thumbGenerating = true;
+    this.thumbGenTotal = ids.length;
+    this.thumbGenCurrent = 0;
+    const restoreId = this.mainModelId;
+    let okCount = 0;
+    try {
+      for (const id of ids) {
+        const model = library.getModelById(id);
+        if (model === null || !model.isSupported()) {
+          continue;
+        }
+        this.thumbGenCurrent++;
+        await this.loadModelForThumb(model);
+        const ready = await this.waitUntil((): boolean => !this.modelLoading, THUMB_MODEL_TIMEOUT_MS);
+        if (!ready) {
+          this.modelLoading = false;
+          hilog.warn(LOG_DOMAIN, TAG, 'thumb model load timeout id=%{public}s', id);
+          continue;
+        }
+        await this.delay(THUMB_SETTLE_MS);
+        if (this.capturing || !this.webReady) {
+          continue;
+        }
+        this.pendingThumbModelId = id;
+        const captured = new Promise<boolean>((resolve: (ok: boolean) => void) => {
+          this.thumbCaptureResolve = resolve;
+        });
+        this.startCapture(CAPTURE_PURPOSE_THUMB);
+        if (await captured) {
+          okCount++;
+          hilog.info(LOG_DOMAIN, TAG, 'thumb saved id=%{public}s', id);
+        }
+      }
+    } finally {
+      this.thumbGenerating = false;
+      this.thumbCaptureResolve = null;
+      this.pendingThumbModelId = '';
+      this.thumbGenCurrent = 0;
+      this.thumbGenTotal = 0;
+      if (restoreId.length > 0 && restoreId === this.mainModelId) {
+        this.loadSlotModel(0);
+      }
+    }
+    if (okCount === ids.length) {
+      this.getUIContext().getPromptAction().showToast({ message: $r('app.string.thumb_gen_done') });
+    } else {
+      this.getUIContext().getPromptAction().showToast({
+        message: $r('app.string.thumb_gen_partial', okCount, ids.length - okCount),
+        duration: 3000
+      });
+    }
+  }
+
   /** 保存快照并刷新全部卡片（widget 截帧完成路径）。 */
   private saveWidgetSnapshot(base64: string, showResult: boolean): void {
     const context: Context = getContext(this);
@@ -1384,6 +1609,17 @@ struct Index {
         this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_capture_fail') });
       }
       return;
+    }
+    // 卡片快照与主模型画面一致，顺带落一份缩略图（缩略主模型随用随得）
+    if (!this.thumbGenerating && this.mainModelId.length > 0) {
+      const mainId = this.mainModelId;
+      ThumbStore.saveThumb(context, base64, mainId)
+        .then((): void => {
+          this.markThumbGenerated(mainId);
+        })
+        .catch((err: BusinessError): void => {
+          hilog.warn(LOG_DOMAIN, TAG, 'save thumb piggyback failed');
+        });
     }
     WidgetUpdater.updateAll(context)
       .then((): void => {

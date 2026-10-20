@@ -265,6 +265,26 @@
       "value": "显示控制条"
     },
     {
+      "name": "thumb_banner_text",
+      "value": "%d 个模型缺少预览图"
+    },
+    {
+      "name": "thumb_banner_generate",
+      "value": "生成"
+    },
+    {
+      "name": "thumb_generating",
+      "value": "正在生成预览图 %d/%d"
+    },
+    {
+      "name": "thumb_gen_done",
+      "value": "预览图已生成"
+    },
+    {
+      "name": "thumb_gen_partial",
+      "value": "已生成 %d 个，%d 个失败"
+    },
+    {
       "name": "confirm_dissolve_group",
       "value": "确定解散分组「%s」？组内模型将保留并移入「未分组」"
     },

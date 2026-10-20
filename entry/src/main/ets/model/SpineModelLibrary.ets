@@ -55,6 +55,8 @@ interface SkeletonPeekRaw {
 /** 批量导入结果汇总。 */
 export class BatchImportResult {
   importedCount: number = 0;
+  /** 本批成功导入的模型 id（缩略图自动生成等后续处理用）。 */
+  importedIds: Array<string> = new Array<string>();
   firstImportedId: string = '';
   failedZips: Array<string> = new Array<string>();
   /** 内容哈希判重跳过的模型数。 */
@@ -194,6 +196,9 @@ export class SpineModelLibrary {
         const group = stage.skelFiles.length >= 2 ? zipDisplayName(uri) : fallbackGroup;
         const staged = await this.importStaged(stage, group, seenHashes);
         result.importedCount += staged.imported.length;
+        for (const item of staged.imported) {
+          result.importedIds.push(item.id);
+        }
         result.skippedDuplicates += staged.duplicates;
         if (result.firstImportedId === '' && staged.imported.length > 0) {
           result.firstImportedId = staged.imported[0].id;

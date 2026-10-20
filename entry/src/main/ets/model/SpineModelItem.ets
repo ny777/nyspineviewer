@@ -25,6 +25,8 @@ export class SpineModelItem {
   group: string;
   /** 内容哈希（skel+atlas SHA-256 hex，重复导入判重用；空串 = 未知，不参与判重）。 */
   contentHash: string;
+  /** 是否已有本地缩略图（<files>/thumbs/<id>.png，运行时扫描填充，不持久化）。 */
+  hasThumb: boolean = false;
 
   constructor(id: string, name: string, folderPath: string, skelFile: string,
     atlasFile: string, animations: Array<string>, skins: Array<string>,
