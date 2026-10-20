@@ -46,11 +46,11 @@
     },
     {
       "name": "set_main",
-      "value": "设为主模型"
+      "value": "设为主"
     },
     {
       "name": "set_sub",
-      "value": "设为副模型"
+      "value": "设为副"
     },
     {
       "name": "slot_main",

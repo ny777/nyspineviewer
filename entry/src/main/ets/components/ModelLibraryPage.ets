@@ -672,101 +672,98 @@ export struct ModelLibraryPage {
 
   @Builder
   ModelCard(model: SpineModelItem) {
-    Column({ space: 10 }) {
-      Row({ space: 10 }) {
-        this.ThumbImage(model)
-        Column({ space: 4 }) {
-          Text(model.name)
-            .fontSize(15)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(this.theme().text)
+    Row({ space: 10 }) {
+      this.ThumbImage(model)
+      Column({ space: 6 }) {
+        Text(model.name)
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.theme().text)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        Row({ space: 6 }) {
+          Text(model.version)
+            .fontSize(10)
+            .fontColor(this.theme().badgeText)
+            .backgroundColor(this.theme().badgeBg)
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+            .borderRadius(4)
+          Text(model.format)
+            .fontSize(10)
+            .fontColor(this.theme().badgeText)
+            .backgroundColor(this.theme().badgeBg)
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+            .borderRadius(4)
+          if (!model.isSupported()) {
+            Text($r('app.string.badge_unsupported'))
+              .fontSize(10)
+              .fontColor(this.theme().badgeWarnText)
+              .backgroundColor(this.theme().badgeWarnBg)
+              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+              .borderRadius(4)
+          }
+          Text(model.group.length > 0 ? model.group : $r('app.string.group_ungrouped'))
+            .fontSize(10)
+            .fontColor(this.theme().textSecondary)
+            .backgroundColor(this.theme().chip)
+            .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+            .borderRadius(4)
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .constraintSize({ maxWidth: 96 })
+            .onClick(() => {
+              if (!this.batchMode) {
+                this.onMoveToGroup(model.id);
+              }
+            })
+        }
+        .alignItems(VerticalAlign.Center)
+        if (!this.batchMode) {
           Row({ space: 6 }) {
-            Text(model.version)
-              .fontSize(10)
-              .fontColor(this.theme().badgeText)
-              .backgroundColor(this.theme().badgeBg)
-              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-              .borderRadius(4)
-            Text(model.format)
-              .fontSize(10)
-              .fontColor(this.theme().badgeText)
-              .backgroundColor(this.theme().badgeBg)
-              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-              .borderRadius(4)
-            if (!model.isSupported()) {
-              Text($r('app.string.badge_unsupported'))
-                .fontSize(10)
-                .fontColor(this.theme().badgeWarnText)
-                .backgroundColor(this.theme().badgeWarnBg)
-                .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-                .borderRadius(4)
-            }
-            Text(model.group.length > 0 ? model.group : $r('app.string.group_ungrouped'))
-              .fontSize(10)
-              .fontColor(this.theme().textSecondary)
-              .backgroundColor(this.theme().chip)
-              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-              .borderRadius(4)
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .constraintSize({ maxWidth: 96 })
+            Button($r('app.string.set_main'))
+              .layoutWeight(1)
+              .fontSize(12)
+              .height(28)
+              .backgroundColor(model.id === this.mainModelId ? this.theme().cardSelected : this.theme().chip)
+              .fontColor(model.id === this.mainModelId ? Color.White : this.theme().textSecondary)
               .onClick(() => {
-                if (!this.batchMode) {
-                  this.onMoveToGroup(model.id);
-                }
+                this.onSelectMain(model.id);
+              })
+            Button($r('app.string.set_sub'))
+              .layoutWeight(1)
+              .fontSize(12)
+              .height(28)
+              .backgroundColor(model.id === this.subModelId ? this.theme().cardSelected : this.theme().chip)
+              .fontColor(model.id === this.subModelId ? Color.White : this.theme().textSecondary)
+              .onClick(() => {
+                this.onSelectSub(model.id);
               })
           }
-          .alignItems(VerticalAlign.Center)
-        }
-        .alignItems(HorizontalAlign.Start)
-        .layoutWeight(1)
-
-        if (!this.batchMode) {
-          Button() {
-            SymbolGlyph($r('sys.symbol.xmark'))
-              .fontSize(14)
-              .fontColor([this.theme().textSecondary])
-          }
-          .width(32)
-          .height(32)
-          .borderRadius(16)
-          .backgroundColor(Color.Transparent)
-          .padding(0)
-          .accessibilityText($r('app.string.a11y_delete_model'))
-          .onClick(() => {
-            this.onDelete(model.id);
-          })
+          .width('100%')
         }
       }
-      .width('100%')
-      .alignItems(VerticalAlign.Top)
+      .alignItems(HorizontalAlign.Start)
+      .layoutWeight(1)
 
       if (!this.batchMode) {
-        Row({ space: 8 }) {
-          Button($r('app.string.set_main'))
-            .layoutWeight(1)
-            .fontSize(12)
-            .height(32)
-            .backgroundColor(model.id === this.mainModelId ? this.theme().cardSelected : this.theme().chip)
-            .fontColor(model.id === this.mainModelId ? Color.White : this.theme().textSecondary)
-            .onClick(() => {
-              this.onSelectMain(model.id);
-            })
-          Button($r('app.string.set_sub'))
-            .layoutWeight(1)
-            .fontSize(12)
-            .height(32)
-            .backgroundColor(model.id === this.subModelId ? this.theme().cardSelected : this.theme().chip)
-            .fontColor(model.id === this.subModelId ? Color.White : this.theme().textSecondary)
-            .onClick(() => {
-              this.onSelectSub(model.id);
-            })
+        Button() {
+          SymbolGlyph($r('sys.symbol.xmark'))
+            .fontSize(14)
+            .fontColor([this.theme().textSecondary])
         }
-        .width('100%')
+        .width(32)
+        .height(32)
+        .borderRadius(16)
+        .backgroundColor(Color.Transparent)
+        .padding(0)
+        .accessibilityText($r('app.string.a11y_delete_model'))
+        .onClick(() => {
+          this.onDelete(model.id);
+        })
       }
     }
+    .width('100%')
+    .alignItems(VerticalAlign.Top)
     .padding(12)
     .borderRadius(12)
     .backgroundColor(this.theme().card)
@@ -774,7 +771,6 @@ export struct ModelLibraryPage {
       width: 2,
       color: this.batchMode && this.isSelected(model.id) ? this.theme().cardSelected : Color.Transparent
     })
-    .width('100%')
     .onClick(() => {
       if (this.batchMode) {
         this.toggleSelect(model.id);
