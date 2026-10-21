@@ -12,6 +12,7 @@ export struct SettingsPage {
   @Prop tapSwitch: boolean = true;
   @Prop @Watch('onFpsPropChange') fps: number = 60;
   @Prop widgetAutoUpdate: boolean = false;
+  @Prop keepScreenOn: boolean = true;
   @State fpsPreview: number = 60;
   onPmaMainChange: (pma: boolean) => void = (pma: boolean) => {
   };
@@ -22,6 +23,8 @@ export struct SettingsPage {
   onFpsChange: (fps: number) => void = (fps: number) => {
   };
   onWidgetAutoUpdateChange: (enabled: boolean) => void = (enabled: boolean) => {
+  };
+  onKeepScreenOnChange: (enabled: boolean) => void = (enabled: boolean) => {
   };
   onUpdateWidgetNow: () => void = () => {
   };
@@ -251,6 +254,30 @@ export struct SettingsPage {
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 10, bottom: 14 })
+      .alignItems(VerticalAlign.Center)
+
+      Divider()
+        .color(this.theme().divider)
+        .width('100%')
+
+      Row({ space: 8 }) {
+        Column({ space: 2 }) {
+          Text($r('app.string.settings_keep_screen_on'))
+            .fontSize(15)
+            .fontColor(this.theme().text)
+          Text($r('app.string.settings_keep_screen_on_desc'))
+            .fontSize(12)
+            .fontColor(this.theme().textMuted)
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+        Toggle({ type: ToggleType.Switch, isOn: this.keepScreenOn })
+          .onChange((isOn: boolean) => {
+            this.onKeepScreenOnChange(isOn);
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 12, bottom: 12 })
       .alignItems(VerticalAlign.Center)
     }
     .width('100%')

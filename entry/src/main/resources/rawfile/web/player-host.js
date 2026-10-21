@@ -69,6 +69,7 @@
     this.transform = { scale: 1, x: 0, y: 0 };
     this.textures = [];
     this.visible = true; // 槽位显隐（会话级开关，隐藏时渲染循环整体跳过）
+    this.mirrored = false; // 槽位水平镜像（scaleX 取反，按槽位持久化偏好恢复）
   };
 
   var slots = [new SlotState(), new SlotState()];
@@ -595,6 +596,17 @@
     renderFrame(0);
   }
 
+  function cmdSetMirror(msg) {
+    var slotIdx = clampSlot(msg.slot);
+    var slot = slots[slotIdx];
+    slot.mirrored = !!msg.mirror;
+    if (slot.skeleton) {
+      // 骨架就绪立即生效；未就绪只存标志（applySkeletonTransform 恒定乘入）
+      applySkeletonTransform(slotIdx);
+      renderFrame(0);
+    }
+  }
+
   function cmdClearSlot(msg) {
     var slotIdx = clampSlot(msg.slot);
     disposeSlot(slotIdx);
@@ -669,7 +681,8 @@
     var safeScale = t.scale > 0.001 ? t.scale : 1.0;
     skel.x = size.w / 2 + t.x * size.w;
     skel.y = size.h / 2 + t.y * size.h;
-    skel.scaleX = safeScale;
+    // 水平镜像：scaleX 取反（骨架默认朝向为正），镜像态在手势/重置后经此函数恒定恢复
+    skel.scaleX = slot.mirrored ? -safeScale : safeScale;
     skel.scaleY = safeScale;
   }
 
@@ -1002,7 +1015,8 @@
     captureFrame: cmdCaptureFrame,
     clearSlot: cmdClearSlot,
     setGestureSlot: cmdSetGestureSlot,
-    setSlotVisible: cmdSetSlotVisible
+    setSlotVisible: cmdSetSlotVisible,
+    setMirror: cmdSetMirror
   };
 
   window.SpineHost = {

@@ -281,6 +281,10 @@
       "value": "显示或隐藏模型2"
     },
     {
+      "name": "a11y_mirror",
+      "value": "水平翻转模型"
+    },
+    {
       "name": "thumb_banner_text",
       "value": "%d 个模型缺少预览图"
     },
@@ -463,6 +467,14 @@
     {
       "name": "settings_widget_auto_update_desc",
       "value": "加载模型后自动刷新桌面卡片快照"
+    },
+    {
+      "name": "settings_keep_screen_on",
+      "value": "播放页屏幕常亮"
+    },
+    {
+      "name": "settings_keep_screen_on_desc",
+      "value": "在播放页浏览模型时保持屏幕不息屏"
     },
     {
       "name": "settings_widget_update_now",

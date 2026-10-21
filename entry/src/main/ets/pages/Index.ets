@@ -3,6 +3,7 @@
  * 状态与持久化全部集中在本页，子组件为受控组件。
  */
 import { HdsTabs, HdsTabsController } from '@kit.UIDesignKit';
+import { window } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { picker } from '@kit.CoreFileKit';
 import { fileIo } from '@kit.CoreFileKit';
@@ -65,6 +66,7 @@ class SlotUiState {
   currentAnimation: string = '';
   selectedSkins: Array<string> = [];
   pma: boolean = true;
+  mirrored: boolean = false;
 
   clone(): SlotUiState {
     const copy = new SlotUiState();
@@ -73,6 +75,7 @@ class SlotUiState {
     copy.currentAnimation = this.currentAnimation;
     copy.selectedSkins = this.selectedSkins.slice();
     copy.pma = this.pma;
+    copy.mirrored = this.mirrored;
     return copy;
   }
 }
@@ -111,10 +114,14 @@ struct Index {
   private cancelImportRequested: boolean = false;
   @State selectedSlot: number = 0;
   @State playing: boolean = true;
+  /** 当前 HdsTabs 页索引（0 播放 / 1 模型库 / 2 设置），常亮窗口联动用。 */
+  private currentTabIndex: number = 0;
   private pausedByHide: boolean = false;
   @State fps: number = 60;
   @State tapSwitch: boolean = true;
   @State widgetAutoUpdate: boolean = false;
+  /** 播放页屏幕常亮（默认开，设置页可关）。 */
+  @State keepScreenOn: boolean = true;
   @State bgColor: string = '#0F172A';
   /** 背景图文件名（<filesDir>/bg/ 内，空串表示未设置）。 */
   @State bgImageName: string = '';
@@ -192,6 +199,8 @@ struct Index {
     this.fps = clampInt(prefs.getNumber(PrefsKeys.TARGET_FPS, 60), 15, 120);
     this.tapSwitch = prefs.getBool(PrefsKeys.TAP_SWITCH_ANIMATION, true);
     this.widgetAutoUpdate = prefs.getBool(PrefsKeys.WIDGET_AUTO_UPDATE, false);
+    this.keepScreenOn = prefs.getBool(PrefsKeys.KEEP_SCREEN_ON, true);
+    this.applyKeepScreenOn();
     this.bgColor = intColorToHex(prefs.getNumber(PrefsKeys.BG_COLOR, PrefsManager.defaultBgColor));
     this.bgImageName = prefs.getString(PrefsKeys.BG_IMAGE_PATH, '');
     this.bgFavorites = this.loadBgFavorites(prefs);
@@ -274,6 +283,7 @@ struct Index {
                 selectedSkins: this.slotUi[this.selectedSlot].selectedSkins,
                 slot0Visible: this.slotVisible[0],
                 slot1Visible: this.slotVisible[1],
+                mirrored: this.slotUi[this.selectedSlot].mirrored,
                 onSlotChange: (slot: number): void => {
                   this.switchSlot(slot);
                 },
@@ -282,6 +292,9 @@ struct Index {
                 },
                 onTogglePlay: (): void => {
                   this.togglePlay();
+                },
+                onToggleMirror: (): void => {
+                  this.toggleMirror();
                 },
                 onAnimationPick: (name: string): void => {
                   this.pickAnimation(name);
@@ -300,7 +313,7 @@ struct Index {
                 }
               })
               .width('100%')
-              .transition(TransitionEffect.translate({ y: 140 })
+              .transition(TransitionEffect.translate({ y: 160 })
                 .combine(TransitionEffect.OPACITY)
                 .animation({ duration: 250, curve: Curve.Friction }))
             }
@@ -395,6 +408,7 @@ struct Index {
           tapSwitch: this.tapSwitch,
           fps: this.fps,
           widgetAutoUpdate: this.widgetAutoUpdate,
+          keepScreenOn: this.keepScreenOn,
           onPmaMainChange: (pma: boolean): void => {
             this.togglePma(0, pma);
           },
@@ -409,6 +423,9 @@ struct Index {
           },
           onWidgetAutoUpdateChange: (enabled: boolean): void => {
             this.toggleWidgetAutoUpdate(enabled);
+          },
+          onKeepScreenOnChange: (enabled: boolean): void => {
+            this.toggleKeepScreenOn(enabled);
           },
           onUpdateWidgetNow: (): void => {
             this.updateWidgetNow();
@@ -442,6 +459,8 @@ struct Index {
 
   /** 切离播放页暂停渲染，切回恢复（同 onPageHide/resumeAfterOverlay 模式）。 */
   private handleTabChange(index: number): void {
+    this.currentTabIndex = index;
+    this.applyKeepScreenOn();
     if (index === 0) {
       if (this.pausedByTabSwitch) {
         this.pausedByTabSwitch = false;
@@ -572,6 +591,8 @@ struct Index {
       y: prefs.getNumber(SlotPrefs.posYKey(slot), 0)
     });
     this.sendCommand({ cmd: BridgeCmdNames.SET_PMA, slot: slot, pma: ui.pma });
+    // Web 端 LOAD_MODEL 会 reset（mirrored=false，缩略图管线默认朝向）→ 重载后恢复用户翻转偏好
+    this.sendCommand({ cmd: BridgeCmdNames.SET_MIRROR, slot: slot, mirror: ui.mirrored });
   }
 
   /** 用偏好与模型元数据初始化槽位 UI 状态。 */
@@ -604,12 +625,14 @@ struct Index {
     const selectedSkins = prefs.getSelectedSkins(SlotPrefs.skinsJsonKey(slot), '');
     const effectiveSkins = selectedSkins.length > 0 ? selectedSkins : (skins.length > 0 ? [skins[0]] : []);
     const pma = prefs.getBool(SlotPrefs.pmaKey(slot), true);
+    const mirrored = prefs.getBool(SlotPrefs.mirrorKey(slot), false);
     this.updateSlotUi(slot, (state: SlotUiState): void => {
       state.animations = animations;
       state.skins = skins;
       state.currentAnimation = currentAnimation;
       state.selectedSkins = effectiveSkins;
       state.pma = pma;
+      state.mirrored = mirrored;
     });
   }
 
@@ -1220,6 +1243,42 @@ struct Index {
       prefs.putBool(SlotPrefs.pmaKey(slot), pma);
       prefs.flush();
     }
+  }
+
+  /** 切换当前控制目标槽位的水平镜像（持久化 + 下发 Web scaleX 取反）。 */
+  private toggleMirror(): void {
+    const slot = this.selectedSlot;
+    this.updateSlotUi(slot, (state: SlotUiState): void => {
+      state.mirrored = !state.mirrored;
+    });
+    const mirrored = this.slotUi[slot].mirrored;
+    this.sendCommand({ cmd: BridgeCmdNames.SET_MIRROR, slot: slot, mirror: mirrored });
+    const prefs = this.prefs;
+    if (prefs !== null) {
+      prefs.putBool(SlotPrefs.mirrorKey(slot), mirrored);
+      prefs.flush();
+    }
+  }
+
+  /** 播放页屏幕常亮开关（持久化；经 window API 应用到主窗口）。 */
+  private toggleKeepScreenOn(enabled: boolean): void {
+    this.keepScreenOn = enabled;
+    this.applyKeepScreenOn();
+    const prefs = this.prefs;
+    if (prefs !== null) {
+      prefs.putBool(PrefsKeys.KEEP_SCREEN_ON, enabled);
+      prefs.flush();
+    }
+  }
+
+  /** 主窗口常亮（播放页且开关开启时息屏抑制；window 级 API，Stack 无此属性）。 */
+  private applyKeepScreenOn(): void {
+    const active = this.keepScreenOn && this.currentTabIndex === 0;
+    window.getLastWindow(getContext(this)).then((win: window.Window): void => {
+      win.setWindowKeepScreenOn(active);
+    }).catch((error: BusinessError): void => {
+      hilog.warn(LOG_DOMAIN, TAG, 'setWindowKeepScreenOn failed: %{public}s', error.message);
+    });
   }
 
   private toggleTapSwitch(enabled: boolean): void {

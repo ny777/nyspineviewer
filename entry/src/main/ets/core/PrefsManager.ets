@@ -22,6 +22,8 @@ export class PrefsKeys {
   static readonly SELECTED_SLOT: string = 'selected_slot';
   static readonly PMA_ENABLED: string = 'pma_enabled';
   static readonly PMA2_ENABLED: string = 'pma2_enabled';
+  static readonly MODEL_MIRRORED: string = 'model_mirrored';
+  static readonly MODEL2_MIRRORED: string = 'model2_mirrored';
   static readonly BG_COLOR: string = 'bg_color';
   static readonly BG_IMAGE_PATH: string = 'bg_image_path';
 
@@ -31,6 +33,7 @@ export class PrefsKeys {
   static readonly TARGET_FPS: string = 'target_fps';
   static readonly TAP_SWITCH_ANIMATION: string = 'tap_switch_animation';
   static readonly WIDGET_AUTO_UPDATE: string = 'widget_auto_update';
+  static readonly KEEP_SCREEN_ON: string = 'keep_screen_on';
 }
 
 const PREFS_STORE_NAME = 'spine_wallpaper_prefs';
@@ -60,6 +63,10 @@ export class SlotPrefs {
 
   static pmaKey(slot: number): string {
     return slot === 1 ? PrefsKeys.PMA2_ENABLED : PrefsKeys.PMA_ENABLED;
+  }
+
+  static mirrorKey(slot: number): string {
+    return slot === 1 ? PrefsKeys.MODEL2_MIRRORED : PrefsKeys.MODEL_MIRRORED;
   }
 }
 
