@@ -1,6 +1,7 @@
 /**
- * 设置页（HdsTabs 第三页）：外观（背景设置入口 + 深色主题）、
- * 播放（PMA + 帧率）、桌面卡片（自动更新 + 立即更新）、关于（版本说明弹窗）。
+ * 设置页（HdsTabs 第三页）：外观（背景设置入口 + 深色主题 + 透明度）、
+ * 播放（PMA + 帧率 + 常亮 + 定时轮换）、回收站（保留策略）、
+ * 桌面卡片（自动更新 + 立即更新）、关于（版本说明弹窗）。
  */
 import { getTheme, ThemeColors } from '../core/Theme';
 import { VersionInfoDialog } from './VersionInfoDialog';
@@ -41,6 +42,10 @@ export struct SettingsPage {
   };
   onAlphaSubChange: (percent: number) => void = (percent: number) => {
   };
+  /** 回收站保留策略（天数，0 = 永久保留）。 */
+  @Prop trashRetentionDays: number = 0;
+  onTrashRetentionChange: (days: number) => void = (days: number) => {
+  };
   onUpdateWidgetNow: () => void = () => {
   };
   onToggleTheme: (dark: boolean) => void = (dark: boolean) => {
@@ -79,6 +84,17 @@ export struct SettingsPage {
 
   private onAlphaSubPropChange(): void {
     this.alphaSubPreview = this.alphaSub;
+  }
+
+  /** 保留策略显示文案（0 = 永久保留）。 */
+  private retentionLabel(days: number): Resource {
+    if (days === 7) {
+      return $r('app.string.trash_retention_7');
+    }
+    if (days === 30) {
+      return $r('app.string.trash_retention_30');
+    }
+    return $r('app.string.trash_retention_forever');
   }
 
   /** 轮换间隔预览：<60 秒 → "N 秒"；整分 → "N 分钟"；否则 → "M 分 S 秒"。 */
@@ -125,6 +141,22 @@ export struct SettingsPage {
             .width('100%')
           Column() {
             this.PlaybackSection()
+          }
+          .width('100%')
+          .borderRadius(14)
+          .backgroundColor(this.theme().card)
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Start)
+
+        Column({ space: 4 }) {
+          Text($r('app.string.settings_trash'))
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.theme().textMuted)
+            .width('100%')
+          Column() {
+            this.TrashSection()
           }
           .width('100%')
           .borderRadius(14)
@@ -426,6 +458,56 @@ export struct SettingsPage {
       .padding({ left: 16, right: 16, top: 10, bottom: 14 })
       .alignItems(VerticalAlign.Center)
       .opacity(this.rotationEnabled ? 1 : 0.4)
+    }
+    .width('100%')
+  }
+
+  /** 保留策略菜单：当前项高亮，点击即应用。 */
+  @Builder
+  TrashRetentionMenu() {
+    Menu() {
+      MenuItem({ content: $r('app.string.trash_retention_forever') })
+        .contentFontColor(this.trashRetentionDays === 0 ? this.theme().accent : this.theme().text)
+        .onClick(() => {
+          this.onTrashRetentionChange(0);
+        })
+      MenuItem({ content: $r('app.string.trash_retention_7') })
+        .contentFontColor(this.trashRetentionDays === 7 ? this.theme().accent : this.theme().text)
+        .onClick(() => {
+          this.onTrashRetentionChange(7);
+        })
+      MenuItem({ content: $r('app.string.trash_retention_30') })
+        .contentFontColor(this.trashRetentionDays === 30 ? this.theme().accent : this.theme().text)
+        .onClick(() => {
+          this.onTrashRetentionChange(30);
+        })
+    }
+  }
+
+  @Builder
+  TrashSection() {
+    Column() {
+      Row({ space: 8 }) {
+        Column({ space: 2 }) {
+          Text($r('app.string.trash_retention_label'))
+            .fontSize(15)
+            .fontColor(this.theme().text)
+          Text($r('app.string.trash_retention_note'))
+            .fontSize(12)
+            .fontColor(this.theme().textMuted)
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        Text(this.retentionLabel(this.trashRetentionDays))
+          .fontSize(14)
+          .fontColor(this.theme().textSecondary)
+          .bindMenu(this.TrashRetentionMenu)
+          .padding({ left: 8, top: 6, bottom: 6 })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+      .alignItems(VerticalAlign.Center)
     }
     .width('100%')
   }

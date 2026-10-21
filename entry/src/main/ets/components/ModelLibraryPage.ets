@@ -1,8 +1,8 @@
 /**
- * 模型库页（HdsTabs 第二页）：标题行 + 右上角导入（+ 图标 / 导入中取消胶囊）、
- * 置顶搜索栏（清空 / 一键折叠全部 / 管理入口）、分组列表（折叠 + 组操作菜单）、
+ * 模型库页（HdsTabs 第二页）：标题行 + 回收站入口 + 右上角导入（+ 图标 / 导入中取消胶囊）、
+ * 置顶搜索栏（清空 / 一键折叠全部 / 排序菜单 / 管理入口）、分组列表（折叠 + 组操作菜单）、
  * 批量模式（勾选 + 工具栏：全选/已选/删除/完成）、模型卡片（版本/格式徽章、分组快捷移动）、
- * 设为主/副模型、删除、空库三步引导卡。
+ * 设为主/副模型、重命名、删除（移入回收站）、空库三步引导卡。
  */
 import { SpineModelItem } from '../model/SpineModelItem';
 import { getTheme, ThemeColors } from '../core/Theme';
@@ -50,6 +50,16 @@ export struct ModelLibraryPage {
   };
   onDeleteModels: (ids: Array<string>) => void = (ids: Array<string>) => {
   };
+  onOpenTrash: () => void = () => {
+  };
+  onRenameModel: (modelId: string) => void = (modelId: string) => {
+  };
+  onSortChange: (mode: string) => void = (mode: string) => {
+  };
+  /** 库内排序模式：'default' | 'name' | 'time'。 */
+  @Prop sortMode: string = 'default';
+  /** 回收站内模型数（标题行徽标）。 */
+  @Prop trashCount: number = 0;
   @State collapsedGroups: Array<string> = [];
   /** 批量管理模式（勾选删除）。 */
   @State batchMode: boolean = false;
@@ -65,17 +75,33 @@ export struct ModelLibraryPage {
     return getTheme(this.themeDark);
   }
 
-  /** 搜索过滤：名称/分组/版本/动画任一 substring 命中（大小写不敏感）。 */
+  /** 搜索过滤：名称/分组/版本/动画任一 substring 命中（大小写不敏感）；再按排序模式排序（拷贝后排序，不就地改 models）。 */
   private filteredModels(): Array<SpineModelItem> {
     const q = this.searchQuery.trim().toLowerCase();
-    if (q.length === 0) {
-      return this.models;
+    let source = this.models;
+    if (q.length > 0) {
+      source = this.models.filter((m: SpineModelItem): boolean =>
+        m.name.toLowerCase().includes(q) ||
+        m.group.toLowerCase().includes(q) ||
+        m.version.toLowerCase().includes(q) ||
+        m.animations.some((a: string): boolean => a.toLowerCase().includes(q)));
     }
-    return this.models.filter((m: SpineModelItem): boolean =>
-      m.name.toLowerCase().includes(q) ||
-      m.group.toLowerCase().includes(q) ||
-      m.version.toLowerCase().includes(q) ||
-      m.animations.some((a: string): boolean => a.toLowerCase().includes(q)));
+    const sorted = source.slice();
+    if (this.sortMode === 'name') {
+      sorted.sort((a: SpineModelItem, b: SpineModelItem): number => {
+        const an = a.name.toLowerCase();
+        const bn = b.name.toLowerCase();
+        return an < bn ? -1 : (an > bn ? 1 : 0);
+      });
+    } else if (this.sortMode === 'time') {
+      sorted.sort((a: SpineModelItem, b: SpineModelItem): number => b.createdAt - a.createdAt);
+    }
+    return sorted;
+  }
+
+  /** 分组成员签名（id+name+hasThumb 按显示顺序）：重命名/排序/缩略图落盘/成员变动都会改变签名，用于强制重建分组项。 */
+  private groupSignature(group: ModelGroup): string {
+    return group.models.map((m: SpineModelItem): string => `${m.id}:${m.name}:${m.hasThumb ? 1 : 0}`).join(';');
   }
 
   /** 由模型列表派生分组视图：未分组置顶，其余按首现顺序。 */
@@ -234,6 +260,38 @@ export struct ModelLibraryPage {
           .maxLines(1)
           .layoutWeight(1)
 
+        Button() {
+          Stack() {
+            SymbolGlyph($r('sys.symbol.trash'))
+              .fontSize(18)
+              .fontColor([this.theme().textSecondary])
+            if (this.trashCount > 0) {
+              Text(`${this.trashCount}`)
+                .fontSize(9)
+                .fontColor(Color.White)
+                .backgroundColor(this.theme().danger)
+                .borderRadius(7)
+                .constraintSize({ minWidth: 14 })
+                .height(14)
+                .padding({ left: 3, right: 3 })
+                .textAlign(TextAlign.Center)
+                .offset({ x: 9, y: -9 })
+            }
+          }
+          .width(24)
+          .height(24)
+        }
+        .width(38)
+        .height(38)
+        .borderRadius(19)
+        .backgroundColor(this.theme().chip)
+        .padding(0)
+        .margin({ left: 8 })
+        .accessibilityText($r('app.string.trash_a11y'))
+        .onClick(() => {
+          this.onOpenTrash();
+        })
+
         if (!this.importing) {
           Button() {
             SymbolGlyph($r('sys.symbol.plus'))
@@ -313,6 +371,18 @@ export struct ModelLibraryPage {
           .onClick(() => {
             this.toggleCollapseAll();
           })
+          Button() {
+            SymbolGlyph($r('sys.symbol.sort'))
+              .fontSize(16)
+              .fontColor([this.theme().textSecondary])
+          }
+          .width(38)
+          .height(38)
+          .borderRadius(19)
+          .backgroundColor(this.theme().chip)
+          .padding(0)
+          .accessibilityText($r('app.string.sort_a11y'))
+          .bindMenu(this.SortMenu)
           Button($r('app.string.batch_manage'))
             .height(38)
             .borderRadius(19)
@@ -356,7 +426,7 @@ export struct ModelLibraryPage {
               }
               .width('100%')
             }
-          }, (group: ModelGroup) => `${group.name}::${group.models.length}::${this.isCollapsed(group.name) ? 'c' : 'o'}`)
+          }, (group: ModelGroup) => `${group.name}::${group.models.length}::${this.groupSignature(group)}::${this.isCollapsed(group.name) ? 'c' : 'o'}`)
         }
         .layoutWeight(1)
         .width('100%')
@@ -370,10 +440,31 @@ export struct ModelLibraryPage {
     .backgroundColor(this.theme().pageBg)
   }
 
+  /** 排序菜单：当前模式项高亮，点击即应用并关闭。 */
+  @Builder
+  SortMenu() {
+    Menu() {
+      MenuItem({ content: $r('app.string.sort_default') })
+        .contentFontColor(this.sortMode === 'default' ? this.theme().accent : this.theme().text)
+        .onClick(() => {
+          this.onSortChange('default');
+        })
+      MenuItem({ content: $r('app.string.sort_name') })
+        .contentFontColor(this.sortMode === 'name' ? this.theme().accent : this.theme().text)
+        .onClick(() => {
+          this.onSortChange('name');
+        })
+      MenuItem({ content: $r('app.string.sort_time') })
+        .contentFontColor(this.sortMode === 'time' ? this.theme().accent : this.theme().text)
+        .onClick(() => {
+          this.onSortChange('time');
+        })
+    }
+  }
+
   /** 批量模式工具栏：全选 | 已选 n | 删除 | 完成（替换搜索行）。 */
   @Builder
-  BatchToolbar() {
-    Row({ space: 10 }) {
+  BatchToolbar() {    Row({ space: 10 }) {
       Row({ space: 6 }) {
         Checkbox()
           .select(this.isFilteredAllSelected())
@@ -410,7 +501,7 @@ export struct ModelLibraryPage {
           }
           const ids = this.selectedIds.slice();
           this.getUIContext().showAlertDialog({
-            message: $r('app.string.batch_delete_confirm', ids.length),
+            message: $r('app.string.batch_move_to_trash_confirm', ids.length),
             primaryButton: {
               value: $r('app.string.dialog_cancel'),
               action: (): void => {
@@ -622,10 +713,10 @@ export struct ModelLibraryPage {
         .width('100%')
         .alignItems(VerticalAlign.Top)
       }, (pair: Array<SpineModelItem>) => {
-        // key 含 hasThumb：缩略图落盘后强制重建卡片项（ForEach 同 key 不重渲染）
-        let key = `${pair[0].id}::${pair[0].hasThumb ? 1 : 0}::${pair.length}`;
+        // key 含 hasThumb/name/成员 id：缩略图落盘、模型重命名、排序/分组变动后强制重建卡片项（ForEach 同 key 不重渲染）
+        let key = `${pair[0].id}::${pair[0].name}::${pair[0].hasThumb ? 1 : 0}::${pair.length}`;
         if (pair.length > 1) {
-          key += `::${pair[1].hasThumb ? 1 : 0}`;
+          key += `::${pair[1].id}::${pair[1].name}::${pair[1].hasThumb ? 1 : 0}`;
         }
         return key;
       })
@@ -804,6 +895,12 @@ export struct ModelLibraryPage {
         value: $r('app.string.menu_move_group'),
         action: (): void => {
           this.onMoveToGroup(model.id);
+        }
+      },
+      {
+        value: $r('app.string.menu_rename_model'),
+        action: (): void => {
+          this.onRenameModel(model.id);
         }
       },
       {

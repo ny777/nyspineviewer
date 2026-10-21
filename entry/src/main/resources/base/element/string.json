@@ -551,6 +551,130 @@
     {
       "name": "batch_delete_confirm",
       "value": "确定删除选中的 %d 个模型？删除后不可恢复"
+    },
+    {
+      "name": "batch_move_to_trash_confirm",
+      "value": "确定将选中的 %d 个模型移入回收站？"
+    },
+    {
+      "name": "menu_rename_model",
+      "value": "重命名"
+    },
+    {
+      "name": "rename_model_title",
+      "value": "重命名模型"
+    },
+    {
+      "name": "rename_model_hint",
+      "value": "输入新的名称"
+    },
+    {
+      "name": "toast_model_renamed",
+      "value": "已重命名"
+    },
+    {
+      "name": "toast_rename_fail",
+      "value": "重命名失败"
+    },
+    {
+      "name": "sort_a11y",
+      "value": "排序方式"
+    },
+    {
+      "name": "sort_default",
+      "value": "默认排序"
+    },
+    {
+      "name": "sort_name",
+      "value": "按名称"
+    },
+    {
+      "name": "sort_time",
+      "value": "按导入时间"
+    },
+    {
+      "name": "trash_title",
+      "value": "回收站"
+    },
+    {
+      "name": "trash_a11y",
+      "value": "回收站"
+    },
+    {
+      "name": "trash_empty_text",
+      "value": "回收站为空"
+    },
+    {
+      "name": "trash_restore",
+      "value": "恢复"
+    },
+    {
+      "name": "trash_purge",
+      "value": "删除"
+    },
+    {
+      "name": "trash_empty_btn",
+      "value": "清空回收站"
+    },
+    {
+      "name": "trash_empty_confirm",
+      "value": "确定清空回收站？其中的模型将被彻底删除且无法恢复"
+    },
+    {
+      "name": "trash_purge_confirm",
+      "value": "确定彻底删除该模型？删除后无法恢复"
+    },
+    {
+      "name": "trash_deleted_at",
+      "value": "删除于 %s"
+    },
+    {
+      "name": "confirm_move_to_trash",
+      "value": "确定将该模型移入回收站？可随时在回收站中恢复"
+    },
+    {
+      "name": "toast_trash_moved",
+      "value": "已移入回收站"
+    },
+    {
+      "name": "toast_trash_restore_fail",
+      "value": "恢复失败"
+    },
+    {
+      "name": "toast_trash_restored",
+      "value": "已恢复到模型库"
+    },
+    {
+      "name": "toast_trash_purged",
+      "value": "已彻底删除"
+    },
+    {
+      "name": "toast_trash_emptied",
+      "value": "回收站已清空"
+    },
+    {
+      "name": "settings_trash",
+      "value": "回收站"
+    },
+    {
+      "name": "trash_retention_label",
+      "value": "保留策略"
+    },
+    {
+      "name": "trash_retention_forever",
+      "value": "永久保留"
+    },
+    {
+      "name": "trash_retention_7",
+      "value": "7天后自动清除"
+    },
+    {
+      "name": "trash_retention_30",
+      "value": "30天后自动清除"
+    },
+    {
+      "name": "trash_retention_note",
+      "value": "自动清除在应用启动时执行"
     }
   ]
 }

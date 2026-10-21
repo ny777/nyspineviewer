@@ -46,6 +46,34 @@ interface ModelMeta {
   group: string;
 }
 
+/** trash.json 条目原始结构（JSON.parse 单次断言归一用）。 */
+interface TrashItemRaw {
+  id?: Object;
+  name?: Object;
+  folderPath?: Object;
+  skelFile?: Object;
+  atlasFile?: Object;
+  animations?: Array<Object>;
+  skins?: Array<Object>;
+  version?: Object;
+  format?: Object;
+  createdAt?: Object;
+  group?: Object;
+  contentHash?: Object;
+  deletedAt?: Object;
+}
+
+/** 回收站条目（模型 + 删除时间戳）。 */
+export class TrashEntry {
+  model: SpineModelItem;
+  deletedAt: number;
+
+  constructor(model: SpineModelItem, deletedAt: number) {
+    this.model = model;
+    this.deletedAt = deletedAt;
+  }
+}
+
 /** 骨架 JSON 原始结构（动画/皮肤名嗅探用）。 */
 interface SkeletonPeekRaw {
   animations?: Record<string, Object>;
@@ -92,6 +120,8 @@ export class SpineModelLibrary {
   private readonly cacheDir: string;
   private readonly modelsRoot: string;
   private readonly libraryFile: string;
+  private readonly trashRoot: string;
+  private readonly trashFile: string;
   private models: Array<SpineModelItem> = new Array<SpineModelItem>();
 
   private constructor(context: Context) {
@@ -99,8 +129,13 @@ export class SpineModelLibrary {
     this.cacheDir = context.cacheDir;
     this.modelsRoot = `${this.filesDir}/models`;
     this.libraryFile = `${this.filesDir}/library.json`;
+    this.trashRoot = `${this.filesDir}/trash`;
+    this.trashFile = `${this.filesDir}/trash.json`;
     if (!fileIo.accessSync(this.modelsRoot, fileIo.AccessModeType.EXIST)) {
       fileIo.mkdirSync(this.modelsRoot, true);
+    }
+    if (!fileIo.accessSync(this.trashRoot, fileIo.AccessModeType.EXIST)) {
+      fileIo.mkdirSync(this.trashRoot, true);
     }
   }
 
@@ -542,6 +577,244 @@ export class SpineModelLibrary {
         // 单个失败继续删除其余
       }
     }
+  }
+
+  // ==================== 回收站 ====================
+
+  /** 读取 trash.json 索引（目录已缺失的条目丢弃并自愈重写）。 */
+  private readTrashIndex(): Array<TrashEntry> {
+    const result = new Array<TrashEntry>();
+    if (!fileIo.accessSync(this.trashFile, fileIo.AccessModeType.EXIST)) {
+      return result;
+    }
+    try {
+      const text = fileIo.readTextSync(this.trashFile);
+      const rawItems = JSON.parse(text) as Array<TrashItemRaw>;
+      if (!Array.isArray(rawItems)) {
+        return new Array<TrashEntry>();
+      }
+      let dropped = false;
+      for (const raw of rawItems) {
+        if (typeof raw.id !== 'string' || typeof raw.name !== 'string' ||
+          typeof raw.folderPath !== 'string' || typeof raw.skelFile !== 'string' ||
+          typeof raw.deletedAt !== 'number' || !Number.isFinite(raw.deletedAt)) {
+          continue;
+        }
+        if (!fileIo.accessSync(raw.folderPath, fileIo.AccessModeType.EXIST)) {
+          dropped = true;
+          continue;
+        }
+        const animations = toStringList(raw.animations);
+        const skins = toStringList(raw.skins);
+        let atlasFile = '';
+        if (typeof raw.atlasFile === 'string') {
+          atlasFile = raw.atlasFile;
+        }
+        let version = 'unknown';
+        if (typeof raw.version === 'string' && raw.version.length > 0) {
+          version = raw.version;
+        }
+        let format = 'SKEL';
+        if (typeof raw.format === 'string' && raw.format.length > 0) {
+          format = raw.format;
+        }
+        let createdAt = raw.deletedAt;
+        if (typeof raw.createdAt === 'number' && Number.isFinite(raw.createdAt)) {
+          createdAt = raw.createdAt;
+        }
+        let group = '';
+        if (typeof raw.group === 'string') {
+          group = raw.group;
+        }
+        let contentHash = '';
+        if (typeof raw.contentHash === 'string') {
+          contentHash = raw.contentHash;
+        }
+        const model = new SpineModelItem(raw.id, raw.name, raw.folderPath, raw.skelFile,
+          atlasFile, animations, skins, version, format, createdAt, group, contentHash);
+        result.push(new TrashEntry(model, raw.deletedAt));
+      }
+      if (dropped) {
+        this.writeTrashIndex(result);
+      }
+      return result;
+    } catch (err) {
+      console.error(`${TAG} readTrashIndex failed: ${JSON.stringify(err)}`);
+      return new Array<TrashEntry>();
+    }
+  }
+
+  /** 写 trash.json 索引。 */
+  private writeTrashIndex(entries: Array<TrashEntry>): void {
+    try {
+      const rawItems = new Array<TrashItemRaw>();
+      for (const entry of entries) {
+        const m = entry.model;
+        const raw: TrashItemRaw = {
+          id: m.id,
+          name: m.name,
+          folderPath: m.folderPath,
+          skelFile: m.skelFile,
+          atlasFile: m.atlasFile,
+          animations: toObjectList(m.animations),
+          skins: toObjectList(m.skins),
+          version: m.version,
+          format: m.format,
+          createdAt: m.createdAt,
+          group: m.group,
+          contentHash: m.contentHash,
+          deletedAt: entry.deletedAt
+        };
+        rawItems.push(raw);
+      }
+      writeTextFile(this.trashFile, JSON.stringify(rawItems));
+    } catch (err) {
+      console.error(`${TAG} writeTrashIndex failed: ${JSON.stringify(err)}`);
+    }
+  }
+
+  /** 将单个模型移入回收站：目录搬移到 trash/<id>，双写索引；缩略图保留。 */
+  async moveToTrash(modelId: string): Promise<void> {
+    const target = this.getModelById(modelId);
+    if (target === null) {
+      return;
+    }
+    const trashedPath = `${this.trashRoot}/${modelId}`;
+    fileIo.renameSync(target.folderPath, trashedPath);
+    const remaining = new Array<SpineModelItem>();
+    for (const m of this.models) {
+      if (m.id !== modelId) {
+        remaining.push(m);
+      }
+    }
+    this.models = remaining;
+    target.folderPath = trashedPath;
+    this.writeLibraryIndex(this.models);
+    const entries = this.readTrashIndex();
+    entries.push(new TrashEntry(target, Date.now()));
+    this.writeTrashIndex(entries);
+  }
+
+  /** 批量移入回收站：串行搬移，单个失败继续下一个，不中断整批。 */
+  async moveModelsToTrash(ids: Array<string>): Promise<void> {
+    for (const id of ids) {
+      try {
+        await this.moveToTrash(id);
+      } catch (err) {
+        console.error(`${TAG} moveToTrash ${id} failed: ${JSON.stringify(err)}`);
+      }
+    }
+  }
+
+  /** 回收站条目列表（按删除时间降序）。 */
+  getTrashedModels(): Array<TrashEntry> {
+    const entries = this.readTrashIndex();
+    entries.sort((a: TrashEntry, b: TrashEntry): number => b.deletedAt - a.deletedAt);
+    return entries;
+  }
+
+  /** 从回收站恢复模型：目录搬回 models/<id>，重新插入库列表头部。未找到返回 false。 */
+  async restoreFromTrash(modelId: string): Promise<boolean> {
+    const entries = this.readTrashIndex();
+    let target: TrashEntry | null = null;
+    for (const entry of entries) {
+      if (entry.model.id === modelId) {
+        target = entry;
+        break;
+      }
+    }
+    if (target === null) {
+      return false;
+    }
+    const restoredPath = `${this.modelsRoot}/${modelId}`;
+    fileIo.renameSync(target.model.folderPath, restoredPath);
+    const remaining = new Array<TrashEntry>();
+    for (const entry of entries) {
+      if (entry.model.id !== modelId) {
+        remaining.push(entry);
+      }
+    }
+    this.writeTrashIndex(remaining);
+    target.model.folderPath = restoredPath;
+    const exists = this.models.some((m: SpineModelItem): boolean => m.id === modelId);
+    if (!exists) {
+      this.models = [target.model].concat(this.models);
+      this.writeLibraryIndex(this.models);
+    }
+    return true;
+  }
+
+  /** 彻底删除回收站内单个模型（目录 + 索引条目；缩略图由调用方清理）。 */
+  async purgeTrashEntry(modelId: string): Promise<void> {
+    const entries = this.readTrashIndex();
+    const remaining = new Array<TrashEntry>();
+    let removedDir = '';
+    for (const entry of entries) {
+      if (entry.model.id === modelId) {
+        removedDir = entry.model.folderPath;
+      } else {
+        remaining.push(entry);
+      }
+    }
+    if (removedDir.length > 0) {
+      deleteDirRecursive(removedDir);
+      this.writeTrashIndex(remaining);
+    }
+  }
+
+  /** 清空回收站：全部彻底删除（返回被清除的模型 id 列表，缩略图由调用方清理）。 */
+  async emptyTrash(): Promise<Array<string>> {
+    const entries = this.readTrashIndex();
+    const purgedIds = new Array<string>();
+    for (const entry of entries) {
+      deleteDirRecursive(entry.model.folderPath);
+      purgedIds.push(entry.model.id);
+    }
+    if (purgedIds.length > 0) {
+      this.writeTrashIndex(new Array<TrashEntry>());
+    }
+    return purgedIds;
+  }
+
+  /**
+   * 按保留策略清除过期条目（retentionDays <= 0 表示永久保留，直接返回）。
+   * 返回被清除的模型 id 列表（缩略图由调用方清理）。
+   */
+  async purgeExpiredTrash(retentionDays: number): Promise<Array<string>> {
+    if (retentionDays <= 0) {
+      return new Array<string>();
+    }
+    const entries = this.readTrashIndex();
+    const threshold = Date.now() - retentionDays * 86400000;
+    const remaining = new Array<TrashEntry>();
+    const purgedIds = new Array<string>();
+    for (const entry of entries) {
+      if (entry.deletedAt < threshold) {
+        deleteDirRecursive(entry.model.folderPath);
+        purgedIds.push(entry.model.id);
+      } else {
+        remaining.push(entry);
+      }
+    }
+    if (purgedIds.length > 0) {
+      this.writeTrashIndex(remaining);
+    }
+    return purgedIds;
+  }
+
+  // ==================== 模型重命名 ====================
+
+  /** 重命名模型显示名（允许与其他模型重名；持久化 library.json + model_meta.json）。 */
+  async renameModel(modelId: string, newName: string): Promise<boolean> {
+    const trimmed = newName.trim();
+    const target = this.getModelById(modelId);
+    if (target === null || trimmed.length === 0 || trimmed === target.name) {
+      return false;
+    }
+    target.name = trimmed;
+    this.rewriteMeta(target);
+    this.writeLibraryIndex(this.models);
+    return true;
   }
 
   /** 现有分组名列表（非空 group，按首现顺序）。 */

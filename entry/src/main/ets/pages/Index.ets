@@ -23,7 +23,7 @@ import {
   parseTransformChangedEvent,
   parseAnimationChangedEvent
 } from '../core/BridgeProtocol';
-import { SpineModelLibrary, BatchImportResult } from '../model/SpineModelLibrary';
+import { SpineModelLibrary, BatchImportResult, TrashEntry } from '../model/SpineModelLibrary';
 import { SpineModelItem } from '../model/SpineModelItem';
 import { sanitizeAtlas } from '../model/AtlasSanitizer';
 import { SpineWebView, SpineBridgeProxy } from '../components/SpineWebView';
@@ -34,6 +34,8 @@ import { BgColorPickerDialog } from '../components/BgColorPickerDialog';
 import { GroupPickerDialog } from '../components/GroupPickerDialog';
 import { GroupDeleteDialog } from '../components/GroupDeleteDialog';
 import { RenameGroupDialog } from '../components/RenameGroupDialog';
+import { RenameModelDialog } from '../components/RenameModelDialog';
+import { TrashDialog } from '../components/TrashDialog';
 import { FrameExporter } from '../capture/FrameExporter';
 import { ThumbStore } from '../capture/ThumbStore';
 import { WidgetFormsStore, WidgetSnapshotStore, WidgetUpdater } from '../widget/WidgetStore';
@@ -99,6 +101,7 @@ struct Index {
   private groupPickerController: CustomDialogController | null = null;
   private groupDeleteController: CustomDialogController | null = null;
   private renameGroupController: CustomDialogController | null = null;
+  private renameModelController: CustomDialogController | null = null;
 
   // 截帧分块缓存
   private captureChunks: Array<string> = [];
@@ -152,6 +155,28 @@ struct Index {
   @State mainModelId: string = '';
   @State subModelId: string = '';
   @State slotUi: Array<SlotUiState> = [new SlotUiState(), new SlotUiState()];
+  /** 库内排序模式：'default' | 'name' | 'time'。 */
+  @State librarySort: string = 'default';
+  /** 回收站保留策略（天数，0 = 永久保留）。 */
+  @State trashRetentionDays: number = 0;
+  /** 回收站条目（@State 驱动弹窗 @Link 与标题行徽标数）。 */
+  @State trashEntries: Array<TrashEntry> = [];
+  /** 回收站弹窗：@Link 必须在字段初始化处绑定 @State 属性（方法内构造拿到裸数组会导致 TwoWay 同步崩溃）。 */
+  private trashController: CustomDialogController = new CustomDialogController({
+    builder: TrashDialog({
+      entries: this.trashEntries,
+      onRestore: (modelId: string): void => {
+        this.restoreTrashedModel(modelId);
+      },
+      onPurge: (modelId: string): void => {
+        this.purgeTrashedModel(modelId);
+      },
+      onEmpty: (): void => {
+        this.emptyTrashAction();
+      }
+    }),
+    autoCancel: true
+  });
   @State bgFavorites: Array<string> = DEFAULT_BG_FAVORITES.slice();
   @StorageProp('themeDark') themeDark: boolean = true;
 
@@ -200,6 +225,10 @@ struct Index {
     this.reloadModels();
 
     const prefs = this.prefs;
+    this.librarySort = this.normalizeSortMode(prefs.getString(PrefsKeys.LIBRARY_SORT, 'default'));
+    this.trashRetentionDays = prefs.getNumber(PrefsKeys.TRASH_RETENTION_DAYS, 0);
+    this.refreshTrashEntries();
+    this.purgeExpiredTrashAtStartup(prefs.getNumber(PrefsKeys.TRASH_RETENTION_DAYS, 0));
     this.mainModelId = prefs.getString(PrefsKeys.ACTIVE_MODEL_ID, '');
     this.subModelId = prefs.getString(PrefsKeys.MODEL2_ID, '');
     this.selectedSlot = prefs.getNumber(PrefsKeys.SELECTED_SLOT, 0) === 1 ? 1 : 0;
@@ -410,7 +439,18 @@ struct Index {
           },
           onDeleteModels: (ids: Array<string>): void => {
             this.deleteModelsAction(ids);
-          }
+          },
+          onOpenTrash: (): void => {
+            this.openTrashAction();
+          },
+          onRenameModel: (modelId: string): void => {
+            this.renameModelAction(modelId);
+          },
+          onSortChange: (mode: string): void => {
+            this.changeLibrarySort(mode);
+          },
+          sortMode: this.librarySort,
+          trashCount: this.trashEntries.length
         })
       }
       .tabBar({ icon: $r('app.media.tab_library'), text: $r('app.string.tab_library') })
@@ -427,6 +467,7 @@ struct Index {
           rotationInterval: this.rotationIntervalSec,
           alphaMain: this.slotUi[0].alpha,
           alphaSub: this.slotUi[1].alpha,
+          trashRetentionDays: this.trashRetentionDays,
           onPmaMainChange: (pma: boolean): void => {
             this.togglePma(0, pma);
           },
@@ -456,6 +497,11 @@ struct Index {
           },
           onAlphaSubChange: (percent: number): void => {
             this.setSlotAlpha(1, percent);
+          },
+          onTrashRetentionChange: (days: number): void => {
+            this.trashRetentionDays = days;
+            this.prefs?.putNumber(PrefsKeys.TRASH_RETENTION_DAYS, days);
+            this.prefs?.flush();
           },
           onUpdateWidgetNow: (): void => {
             this.updateWidgetNow();
@@ -998,7 +1044,7 @@ struct Index {
       return;
     }
     this.getUIContext().showAlertDialog({
-      message: $r('app.string.confirm_delete'),
+      message: $r('app.string.confirm_move_to_trash'),
       primaryButton: {
         value: $r('app.string.dialog_cancel'),
         action: (): void => {
@@ -1014,40 +1060,38 @@ struct Index {
     });
   }
 
+  /** 移入回收站：目录搬移保留缩略图，槽位清理，徽标数刷新。 */
   private performDelete(modelId: string): void {
     const library = this.library;
     if (library === null) {
       return;
     }
-    library.deleteModel(modelId)
+    library.moveToTrash(modelId)
       .then((): void => {
-        ThumbStore.deleteThumb(getContext(this), modelId);
         this.reloadModels();
+        this.refreshTrashEntries();
         this.cleanupSlotsForDeleted(modelId);
-        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_deleted') });
+        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_trash_moved') });
       })
       .catch((err: BusinessError): void => {
         this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_delete_fail') });
       });
   }
 
-  /** 批量删除（确认弹窗已由模型库页面内完成）：串行删除全部 → 逐个清理槽位。 */
+  /** 批量移入回收站（确认弹窗已由模型库页面内完成）：串行搬移 → 逐个清理槽位。 */
   private deleteModelsAction(ids: Array<string>): void {
     const library = this.library;
     if (library === null || ids.length === 0) {
       return;
     }
-    library.deleteModels(ids)
+    library.moveModelsToTrash(ids)
       .then((): void => {
-        const context: Context = getContext(this);
-        for (const id of ids) {
-          ThumbStore.deleteThumb(context, id);
-        }
         this.reloadModels();
+        this.refreshTrashEntries();
         for (const id of ids) {
           this.cleanupSlotsForDeleted(id);
         }
-        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_deleted') });
+        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_trash_moved') });
       })
       .catch((err: BusinessError): void => {
         this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_delete_fail') });
@@ -1073,6 +1117,145 @@ struct Index {
       this.resetSlotUi(1);
     }
     prefs.flush();
+  }
+
+  // ==================== 排序 / 重命名 / 回收站 ====================
+
+  /** 排序模式白名单归一（非法值回退 default）。 */
+  private normalizeSortMode(mode: string): string {
+    return mode === 'name' || mode === 'time' ? mode : 'default';
+  }
+
+  /** 切换库内排序并持久化。 */
+  private changeLibrarySort(mode: string): void {
+    const normalized = this.normalizeSortMode(mode);
+    this.librarySort = normalized;
+    this.prefs?.putString(PrefsKeys.LIBRARY_SORT, normalized);
+    this.prefs?.flush();
+  }
+
+  /** 从回收站索引刷新条目（整体重赋值驱动弹窗 @Link 与徽标数）。 */
+  private refreshTrashEntries(): void {
+    const library = this.library;
+    if (library === null) {
+      return;
+    }
+    this.trashEntries = library.getTrashedModels();
+  }
+
+  /** 启动时按保留策略清除过期回收站条目（retentionDays <= 0 永久保留）。 */
+  private purgeExpiredTrashAtStartup(retentionDays: number): void {
+    const library = this.library;
+    if (library === null || retentionDays <= 0) {
+      return;
+    }
+    library.purgeExpiredTrash(retentionDays)
+      .then((purgedIds: Array<string>): void => {
+        if (purgedIds.length === 0) {
+          return;
+        }
+        const context: Context = getContext(this);
+        for (const id of purgedIds) {
+          ThumbStore.deleteThumb(context, id);
+        }
+        this.refreshTrashEntries();
+      })
+      .catch((err: BusinessError): void => {
+        console.error(`${TAG} purgeExpiredTrash failed: ${JSON.stringify(err)}`);
+      });
+  }
+
+  /** 重命名模型：弹窗预填当前名，确认后持久化。 */
+  private renameModelAction(modelId: string): void {
+    const library = this.library;
+    if (library === null) {
+      return;
+    }
+    const model = library.getModelById(modelId);
+    if (model === null) {
+      return;
+    }
+    this.renameModelController = new CustomDialogController({
+      builder: RenameModelDialog({
+        initialName: model.name,
+        confirm: (newName: string): void => {
+          library.renameModel(modelId, newName)
+            .then((ok: boolean): void => {
+              if (ok) {
+                this.reloadModels();
+                this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_model_renamed') });
+              }
+            })
+            .catch((err: BusinessError): void => {
+              this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_rename_fail') });
+            });
+        }
+      }),
+      autoCancel: true
+    });
+    this.renameModelController.open();
+  }
+
+  /** 打开回收站弹窗（先刷新条目再复用字段初始化的控制器）。 */
+  private openTrashAction(): void {
+    this.refreshTrashEntries();
+    this.trashController.open();
+  }
+
+  /** 回收站内恢复单个模型。 */
+  private restoreTrashedModel(modelId: string): void {
+    const library = this.library;
+    if (library === null) {
+      return;
+    }
+    library.restoreFromTrash(modelId)
+      .then((ok: boolean): void => {
+        this.refreshTrashEntries();
+        if (ok) {
+          this.reloadModels();
+          this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_trash_restored') });
+        }
+      })
+      .catch((err: BusinessError): void => {
+        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_trash_restore_fail') });
+      });
+  }
+
+  /** 回收站内彻底删除单个模型（含缩略图）。 */
+  private purgeTrashedModel(modelId: string): void {
+    const library = this.library;
+    if (library === null) {
+      return;
+    }
+    library.purgeTrashEntry(modelId)
+      .then((): void => {
+        ThumbStore.deleteThumb(getContext(this), modelId);
+        this.refreshTrashEntries();
+        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_trash_purged') });
+      })
+      .catch((err: BusinessError): void => {
+        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_delete_fail') });
+      });
+  }
+
+  /** 清空回收站（含全部缩略图）。 */
+  private emptyTrashAction(): void {
+    const library = this.library;
+    if (library === null) {
+      return;
+    }
+    library.emptyTrash()
+      .then((purgedIds: Array<string>): void => {
+        const context: Context = getContext(this);
+        for (const id of purgedIds) {
+          ThumbStore.deleteThumb(context, id);
+        }
+        this.refreshTrashEntries();
+        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_trash_emptied') });
+      })
+      .catch((err: BusinessError): void => {
+        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_delete_fail') });
+      });
   }
 
   // ==================== 分组操作 ====================
@@ -1163,7 +1346,7 @@ struct Index {
     });
   }
 
-  /** 删除分组：弹三选一确认（仅删分组 / 删除组及全部模型 / 取消）。 */
+  /** 删除分组：弹三选一确认（仅删分组 / 连同模型移入回收站 / 取消）。 */
   private deleteGroupAction(group: string): void {
     const library = this.library;
     if (library === null || group.length === 0) {
@@ -1173,25 +1356,36 @@ struct Index {
       builder: GroupDeleteDialog({
         groupName: group,
         confirm: (deleteModels: boolean): void => {
-          library.deleteGroup(group, deleteModels)
-            .then((deletedIds: Array<string>): void => {
-              if (deleteModels) {
-                const context: Context = getContext(this);
-                for (const id of deletedIds) {
-                  ThumbStore.deleteThumb(context, id);
+          if (deleteModels) {
+            // 连同模型删除 → 组内模型整体移入回收站（缩略图保留，可恢复）
+            const memberIds = new Array<string>();
+            for (const m of this.models) {
+              if (m.group === group) {
+                memberIds.push(m.id);
+              }
+            }
+            library.moveModelsToTrash(memberIds)
+              .then((): void => {
+                this.reloadModels();
+                this.refreshTrashEntries();
+                for (const id of memberIds) {
+                  this.cleanupSlotsForDeleted(id);
                 }
-              }
-              this.reloadModels();
-              for (const id of deletedIds) {
-                this.cleanupSlotsForDeleted(id);
-              }
-              this.getUIContext().getPromptAction().showToast({
-                message: deleteModels ? $r('app.string.toast_deleted') : $r('app.string.toast_group_dissolved')
+                this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_trash_moved') });
+              })
+              .catch((err: BusinessError): void => {
+                this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_delete_fail') });
               });
-            })
-            .catch((err: BusinessError): void => {
-              this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_delete_fail') });
-            });
+          } else {
+            library.deleteGroup(group, false)
+              .then((): void => {
+                this.reloadModels();
+                this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_group_dissolved') });
+              })
+              .catch((err: BusinessError): void => {
+                this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_delete_fail') });
+              });
+          }
         }
       }),
       autoCancel: true

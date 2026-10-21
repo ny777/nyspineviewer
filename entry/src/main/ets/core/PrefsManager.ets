@@ -38,6 +38,8 @@ export class PrefsKeys {
   static readonly KEEP_SCREEN_ON: string = 'keep_screen_on';
   static readonly ANIMATION_ROTATION_ENABLED: string = 'animation_rotation_enabled';
   static readonly ANIMATION_ROTATION_INTERVAL: string = 'animation_rotation_interval';
+  static readonly LIBRARY_SORT: string = 'library_sort';
+  static readonly TRASH_RETENTION_DAYS: string = 'trash_retention_days';
 }
 
 const PREFS_STORE_NAME = 'spine_wallpaper_prefs';
