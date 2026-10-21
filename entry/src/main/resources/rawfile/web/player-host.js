@@ -864,6 +864,8 @@
 
   canvas.addEventListener('touchstart', function (e) {
     e.preventDefault();
+    // 任意画布触摸（点按/拖拽/捏合）即刻收起悬浮控制条
+    bridgeCall('onScreenTap', '{}');
     var points = touchPoints(e.touches);
     if (points.length === 1) {
       gesture.mode = 'drag';
@@ -925,8 +927,7 @@
     if (remaining === 0) {
       var quick = Date.now() - gesture.downTime <= TAP_TIMEOUT_MS;
       if (!gesture.moved && quick && gesture.mode === 'drag') {
-        // 画布点按一律上报（不受 tapSwitch/模型加载门控），ArkTS 侧据此隐藏悬浮控制条
-        bridgeCall('onScreenTap', '{}');
+        // 点按隐藏控制条的上报已在 touchstart 统一处理（任意触摸即刻收起）
         handleTap();
       } else if (gesture.moved) {
         onGestureEnd();
