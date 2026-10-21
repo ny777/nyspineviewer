@@ -273,6 +273,14 @@
       "value": "显示控制条"
     },
     {
+      "name": "a11y_slot_vis_main",
+      "value": "显示或隐藏模型1"
+    },
+    {
+      "name": "a11y_slot_vis_sub",
+      "value": "显示或隐藏模型2"
+    },
+    {
       "name": "thumb_banner_text",
       "value": "%d 个模型缺少预览图"
     },

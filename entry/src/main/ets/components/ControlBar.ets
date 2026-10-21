@@ -1,5 +1,6 @@
 /**
- * 播放页悬浮控制条（单行全图标式）：槽位切换（主/副紧凑单字）/
+ * 播放页悬浮控制条（单行全图标式）：槽位显隐开关（主/副紧凑单字，
+ * 点按=显示/隐藏对应模型、长按=切换控制目标）/
  * 皮肤多选 + 动画菜单（中部横向滚动，动画 chip 置于最右）/
  * 播放暂停图标 / 截图（SaveButton 安全组件，点击临时授权直存系统图库）/
  * 重置变换图标 / 清空当前槽位图标。
@@ -15,9 +16,13 @@ export struct ControlBar {
   @Prop currentAnimation: string = '';
   @Prop skins: Array<string> = [];
   @Prop selectedSkins: Array<string> = [];
+  @Prop slot0Visible: boolean = true;
+  @Prop slot1Visible: boolean = true;
   @StorageProp('themeDark') themeDark: boolean = true;
 
   onSlotChange: (slot: number) => void = (slot: number) => {
+  };
+  onSlotToggleVisible: (slot: number) => void = (slot: number) => {
   };
   onTogglePlay: () => void = () => {
   };
@@ -38,7 +43,8 @@ export struct ControlBar {
 
   build() {
     Row({ space: 6 }) {
-      // 槽位切换：主/副紧凑单字拼接 pill
+      // 槽位显隐开关：主/副紧凑单字拼接 pill
+      // 点按=切换该模型显隐（隐藏态变淡）；长按=切换控制目标（选中态高亮）
       Text($r('app.string.slot_main_short'))
         .fontSize(12)
         .fontWeight(FontWeight.Medium)
@@ -48,10 +54,15 @@ export struct ControlBar {
         .backgroundColor(this.slot === 0 ? this.theme().cardSelected : this.theme().chip)
         .fontColor(this.slot === 0 ? Color.White : this.theme().textSecondary)
         .borderRadius({ topLeft: 16, bottomLeft: 16 })
-        .accessibilityText($r('app.string.slot_main'))
+        .opacity(this.slot0Visible ? 1 : 0.45)
+        .accessibilityText($r('app.string.a11y_slot_vis_main'))
         .onClick(() => {
-          this.onSlotChange(0);
+          this.onSlotToggleVisible(0);
         })
+        .gesture(LongPressGesture({ repeat: false })
+          .onAction(() => {
+            this.onSlotChange(0);
+          }))
       Text($r('app.string.slot_sub_short'))
         .fontSize(12)
         .fontWeight(FontWeight.Medium)
@@ -61,10 +72,15 @@ export struct ControlBar {
         .backgroundColor(this.slot === 1 ? this.theme().cardSelected : this.theme().chip)
         .fontColor(this.slot === 1 ? Color.White : this.theme().textSecondary)
         .borderRadius({ topRight: 16, bottomRight: 16 })
-        .accessibilityText($r('app.string.slot_sub'))
+        .opacity(this.slot1Visible ? 1 : 0.45)
+        .accessibilityText($r('app.string.a11y_slot_vis_sub'))
         .onClick(() => {
-          this.onSlotChange(1);
+          this.onSlotToggleVisible(1);
         })
+        .gesture(LongPressGesture({ repeat: false })
+          .onAction(() => {
+            this.onSlotChange(1);
+          }))
 
       // 中部弹性区：皮肤 chips + 动画 chip（最右），空间不足时可滚动
       Scroll() {

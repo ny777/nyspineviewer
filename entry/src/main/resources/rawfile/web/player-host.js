@@ -68,6 +68,7 @@
     this.desired = { animation: null, loop: true, skins: [], transform: null };
     this.transform = { scale: 1, x: 0, y: 0 };
     this.textures = [];
+    this.visible = true; // 槽位显隐（会话级开关，隐藏时渲染循环整体跳过）
   };
 
   var slots = [new SlotState(), new SlotState()];
@@ -205,6 +206,7 @@
     var slot = slots[slotIdx];
     disposeSlot(slotIdx);
     slot.reset();
+    slot.visible = true; // 加载即显示：新设置的模型必然可见，避免"设置了却看不见"
     slot.status = 'loading';
     slot.modelId = String(msg.modelId || '');
     slot.version = String(msg.version || '4.1');
@@ -587,6 +589,12 @@
     gestureSlot = clampSlot(msg.slot);
   }
 
+  function cmdSetSlotVisible(msg) {
+    var slotIdx = clampSlot(msg.slot);
+    slots[slotIdx].visible = !!msg.visible;
+    renderFrame(0);
+  }
+
   function cmdClearSlot(msg) {
     var slotIdx = clampSlot(msg.slot);
     disposeSlot(slotIdx);
@@ -684,6 +692,10 @@
       var idx = order[k];
       var slot = slots[idx];
       if (!slot.skeleton) {
+        continue;
+      }
+      // 隐藏槽整体跳过（动画 state 暂停，重新显示后从暂停处继续）
+      if (!slot.visible) {
         continue;
       }
       var r = rendererFor(slot.version);
@@ -892,6 +904,8 @@
     if (remaining === 0) {
       var quick = Date.now() - gesture.downTime <= TAP_TIMEOUT_MS;
       if (!gesture.moved && quick && gesture.mode === 'drag') {
+        // 画布点按一律上报（不受 tapSwitch/模型加载门控），ArkTS 侧据此隐藏悬浮控制条
+        bridgeCall('onScreenTap', '{}');
         handleTap();
       } else if (gesture.moved) {
         onGestureEnd();
@@ -970,7 +984,8 @@
     setBackgroundImage: cmdSetBackgroundImage,
     captureFrame: cmdCaptureFrame,
     clearSlot: cmdClearSlot,
-    setGestureSlot: cmdSetGestureSlot
+    setGestureSlot: cmdSetGestureSlot,
+    setSlotVisible: cmdSetSlotVisible
   };
 
   window.SpineHost = {

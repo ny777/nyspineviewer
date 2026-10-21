@@ -121,6 +121,8 @@ struct Index {
   @State capturing: boolean = false;
   /** 沉浸模式：控制条收起状态（内存态，每次启动默认显示）。 */
   @State controlBarVisible: boolean = true;
+  /** 槽位模型显隐（会话级，不持久化；进 App 默认双显）。 */
+  @State slotVisible: Array<boolean> = [true, true];
   /** 缩略图补全管线运行中（抑制 widget 自动截帧）。 */
   @State thumbGenerating: boolean = false;
   /** 缩略图管线进度（横幅显示用）。 */
@@ -171,6 +173,10 @@ struct Index {
     };
     this.bridge.animationChangedHandler = (json: string): void => {
       this.handleAnimationChanged(json);
+    };
+    this.bridge.screenTapHandler = (): void => {
+      // 画布点按（Web touchend tap 分支上报）→ 沉浸：收起悬浮控制条
+      this.controlBarVisible = false;
     };
 
     this.prefs = await PrefsManager.getInstance(context);
@@ -266,8 +272,13 @@ struct Index {
                 currentAnimation: this.slotUi[this.selectedSlot].currentAnimation,
                 skins: this.slotUi[this.selectedSlot].skins,
                 selectedSkins: this.slotUi[this.selectedSlot].selectedSkins,
+                slot0Visible: this.slotVisible[0],
+                slot1Visible: this.slotVisible[1],
                 onSlotChange: (slot: number): void => {
                   this.switchSlot(slot);
+                },
+                onSlotToggleVisible: (slot: number): void => {
+                  this.toggleSlotVisible(slot);
                 },
                 onTogglePlay: (): void => {
                   this.togglePlay();
@@ -313,6 +324,20 @@ struct Index {
           }
           .width('100%')
           .padding({ left: 12, right: 12, bottom: 96 })
+
+          // 底部上滑手势区：展开被点按隐藏的控制条（悬浮页签栏两侧及上方区域可触发；
+          // 96vp 正好覆盖底部 Column 的 padding 空带，不遮挡把手与控制条）
+          Row()
+            .width('100%')
+            .height(96)
+            .backgroundColor(Color.Transparent)
+            .hitTestBehavior(HitTestMode.Transparent)
+            .gesture(PanGesture({ fingers: 1, direction: PanDirection.Vertical, distance: 8 })
+              .onActionEnd((event: GestureEvent): void => {
+                if (event.offsetY < -20 && !this.controlBarVisible) {
+                  this.controlBarVisible = true;
+                }
+              }))
         }
         .width('100%')
         .height('100%')
@@ -448,6 +473,9 @@ struct Index {
     }
     this.sendCommand({ cmd: BridgeCmdNames.SET_PLAYING, playing: this.playing });
     this.sendCommand({ cmd: BridgeCmdNames.SET_TAP_SWITCH, tapSwitch: this.tapSwitch });
+    // Web 页面重载后显隐状态对齐（SlotState.reset 默认可见，此处按 ArkTS 侧状态重放）
+    this.sendCommand({ cmd: BridgeCmdNames.SET_SLOT_VISIBLE, slot: 0, visible: this.slotVisible[0] });
+    this.sendCommand({ cmd: BridgeCmdNames.SET_SLOT_VISIBLE, slot: 1, visible: this.slotVisible[1] });
     this.loadSlotModel(0);
     this.loadSlotModel(1);
     const queued = this.pendingScripts;
@@ -479,6 +507,9 @@ struct Index {
     if (prefs === null || library === null) {
       return;
     }
+    // Web 端加载/清空均会置槽位为可见（加载即显示），ArkTS 侧状态同步
+    this.slotVisible[slot] = true;
+    this.slotVisible = this.slotVisible.slice();
     const modelId = slot === 0 ? this.mainModelId : this.subModelId;
     if (modelId.length === 0) {
       if (slot === 0) {
@@ -1131,6 +1162,16 @@ struct Index {
     }
   }
 
+  /** 切换槽位模型显隐（pill 点按）：下发 Web 命令；隐藏当前控制目标时自动切到另一槽位。 */
+  private toggleSlotVisible(slot: number): void {
+    this.slotVisible[slot] = !this.slotVisible[slot];
+    this.slotVisible = this.slotVisible.slice();
+    this.sendCommand({ cmd: BridgeCmdNames.SET_SLOT_VISIBLE, slot: slot, visible: this.slotVisible[slot] });
+    if (!this.slotVisible[slot] && this.selectedSlot === slot) {
+      this.switchSlot(slot === 0 ? 1 : 0);
+    }
+  }
+
   private togglePlay(): void {
     this.playing = !this.playing;
     this.sendCommand({ cmd: BridgeCmdNames.SET_PLAYING, playing: this.playing });
@@ -1547,6 +1588,8 @@ struct Index {
     this.thumbGenTotal = ids.length;
     this.thumbGenCurrent = 0;
     const restoreId = this.mainModelId;
+    // 管线会 LOAD_MODEL 到槽 0（Web 端加载即显示）：结束后需恢复用户原本对主模型的隐藏状态
+    const mainWasHidden = !this.slotVisible[0];
     let okCount = 0;
     try {
       for (const id of ids) {
@@ -1584,6 +1627,11 @@ struct Index {
       this.thumbGenTotal = 0;
       if (restoreId.length > 0 && restoreId === this.mainModelId) {
         this.loadSlotModel(0);
+        if (mainWasHidden) {
+          this.slotVisible[0] = false;
+          this.slotVisible = this.slotVisible.slice();
+          this.sendCommand({ cmd: BridgeCmdNames.SET_SLOT_VISIBLE, slot: 0, visible: false });
+        }
       }
     }
     if (okCount === ids.length) {

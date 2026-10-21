@@ -30,6 +30,8 @@ export class SpineBridgeProxy {
   };
   animationChangedHandler: (json: string) => void = (json: string) => {
   };
+  screenTapHandler: (json: string) => void = (json: string) => {
+  };
 
   onModelLoaded(json: string): void {
     this.modelLoadedHandler(json);
@@ -54,6 +56,10 @@ export class SpineBridgeProxy {
   onAnimationChanged(json: string): void {
     this.animationChangedHandler(json);
   }
+
+  onScreenTap(json: string): void {
+    this.screenTapHandler(json);
+  }
 }
 
 @Component
@@ -73,7 +79,7 @@ export struct SpineWebView {
         object: this.bridge,
         name: 'spineBridge',
         methodList: ['onModelLoaded', 'onError', 'onCaptureFrameChunk', 'onCaptureFrame',
-          'onTransformChanged', 'onAnimationChanged'],
+          'onTransformChanged', 'onAnimationChanged', 'onScreenTap'],
         controller: this.controller
       })
       .onInterceptRequest((event: OnInterceptRequestEvent) => this.routeRequest(event.request))
