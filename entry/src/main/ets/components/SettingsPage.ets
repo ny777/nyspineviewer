@@ -15,8 +15,12 @@ export struct SettingsPage {
   @Prop keepScreenOn: boolean = true;
   @Prop rotationEnabled: boolean = false;
   @Prop @Watch('onRotationIntervalPropChange') rotationInterval: number = 60;
+  @Prop @Watch('onAlphaMainPropChange') alphaMain: number = 100;
+  @Prop @Watch('onAlphaSubPropChange') alphaSub: number = 100;
   @State fpsPreview: number = 60;
   @State rotationPreview: number = 60;
+  @State alphaMainPreview: number = 100;
+  @State alphaSubPreview: number = 100;
   onPmaMainChange: (pma: boolean) => void = (pma: boolean) => {
   };
   onPmaSubChange: (pma: boolean) => void = (pma: boolean) => {
@@ -32,6 +36,10 @@ export struct SettingsPage {
   onRotationEnabledChange: (enabled: boolean) => void = (enabled: boolean) => {
   };
   onRotationIntervalChange: (sec: number) => void = (sec: number) => {
+  };
+  onAlphaMainChange: (percent: number) => void = (percent: number) => {
+  };
+  onAlphaSubChange: (percent: number) => void = (percent: number) => {
   };
   onUpdateWidgetNow: () => void = () => {
   };
@@ -53,6 +61,8 @@ export struct SettingsPage {
   aboutToAppear(): void {
     this.fpsPreview = this.fps;
     this.rotationPreview = this.rotationInterval;
+    this.alphaMainPreview = this.alphaMain;
+    this.alphaSubPreview = this.alphaSub;
   }
 
   private onFpsPropChange(): void {
@@ -61,6 +71,14 @@ export struct SettingsPage {
 
   private onRotationIntervalPropChange(): void {
     this.rotationPreview = this.rotationInterval;
+  }
+
+  private onAlphaMainPropChange(): void {
+    this.alphaMainPreview = this.alphaMain;
+  }
+
+  private onAlphaSubPropChange(): void {
+    this.alphaSubPreview = this.alphaSub;
   }
 
   /** 轮换间隔预览：<60 秒 → "N 秒"；整分 → "N 分钟"；否则 → "M 分 S 秒"。 */
@@ -192,6 +210,60 @@ export struct SettingsPage {
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+
+      Divider()
+        .color(this.theme().divider)
+        .width('100%')
+
+      // 模型1整体透明度：拖动只动预览，松手/点击提交（写偏好 + 下发 Web）
+      Row({ space: 10 }) {
+        Text($r('app.string.settings_alpha_main'))
+          .fontSize(15)
+          .fontColor(this.theme().text)
+        Text($r('app.string.alpha_percent', this.alphaMainPreview))
+          .fontSize(14)
+          .fontColor(this.theme().textSecondary)
+          .constraintSize({ maxWidth: 60 })
+          .textAlign(TextAlign.End)
+        Slider({ value: this.alphaMain, min: 10, max: 100, step: 5, style: SliderStyle.OutSet })
+          .layoutWeight(1)
+          .onChange((value: number, mode: SliderChangeMode) => {
+            this.alphaMainPreview = Math.round(value);
+            if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+              this.onAlphaMainChange(Math.round(value));
+            }
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 10, bottom: 12 })
+      .alignItems(VerticalAlign.Center)
+
+      Divider()
+        .color(this.theme().divider)
+        .width('100%')
+
+      // 模型2整体透明度：同上
+      Row({ space: 10 }) {
+        Text($r('app.string.settings_alpha_sub'))
+          .fontSize(15)
+          .fontColor(this.theme().text)
+        Text($r('app.string.alpha_percent', this.alphaSubPreview))
+          .fontSize(14)
+          .fontColor(this.theme().textSecondary)
+          .constraintSize({ maxWidth: 60 })
+          .textAlign(TextAlign.End)
+        Slider({ value: this.alphaSub, min: 10, max: 100, step: 5, style: SliderStyle.OutSet })
+          .layoutWeight(1)
+          .onChange((value: number, mode: SliderChangeMode) => {
+            this.alphaSubPreview = Math.round(value);
+            if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+              this.onAlphaSubChange(Math.round(value));
+            }
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 10, bottom: 12 })
+      .alignItems(VerticalAlign.Center)
 
       Divider()
         .color(this.theme().divider)

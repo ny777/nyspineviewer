@@ -33,6 +33,8 @@ export interface BridgeCommand {
   visible?: boolean;
   /** 槽位水平镜像（setMirror 专用）。 */
   mirror?: boolean;
+  /** 槽位整体透明度 0-1（setAlpha 专用）。 */
+  alpha?: number;
   fps?: number;
   color?: string;
   /** 背景图虚拟域相对地址（/bg/<文件名>），空串表示移除。 */
@@ -56,6 +58,7 @@ export class BridgeCmdNames {
   static readonly SET_GESTURE_SLOT: string = 'setGestureSlot';
   static readonly SET_SLOT_VISIBLE: string = 'setSlotVisible';
   static readonly SET_MIRROR: string = 'setMirror';
+  static readonly SET_ALPHA: string = 'setAlpha';
 }
 
 /** Web→ArkTS：模型加载完成事件。 */

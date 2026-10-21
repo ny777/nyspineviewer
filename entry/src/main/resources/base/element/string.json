@@ -501,6 +501,18 @@
       "value": "%1$d 分 %2$d 秒"
     },
     {
+      "name": "settings_alpha_main",
+      "value": "模型1透明度"
+    },
+    {
+      "name": "settings_alpha_sub",
+      "value": "模型2透明度"
+    },
+    {
+      "name": "alpha_percent",
+      "value": "%d%"
+    },
+    {
       "name": "settings_widget_update_now",
       "value": "立即更新卡片"
     },

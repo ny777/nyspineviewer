@@ -67,6 +67,7 @@ class SlotUiState {
   selectedSkins: Array<string> = [];
   pma: boolean = true;
   mirrored: boolean = false;
+  alpha: number = 100;
 
   clone(): SlotUiState {
     const copy = new SlotUiState();
@@ -76,6 +77,7 @@ class SlotUiState {
     copy.selectedSkins = this.selectedSkins.slice();
     copy.pma = this.pma;
     copy.mirrored = this.mirrored;
+    copy.alpha = this.alpha;
     return copy;
   }
 }
@@ -423,6 +425,8 @@ struct Index {
           keepScreenOn: this.keepScreenOn,
           rotationEnabled: this.rotationEnabled,
           rotationInterval: this.rotationIntervalSec,
+          alphaMain: this.slotUi[0].alpha,
+          alphaSub: this.slotUi[1].alpha,
           onPmaMainChange: (pma: boolean): void => {
             this.togglePma(0, pma);
           },
@@ -446,6 +450,12 @@ struct Index {
           },
           onRotationIntervalChange: (sec: number): void => {
             this.changeRotationInterval(sec);
+          },
+          onAlphaMainChange: (percent: number): void => {
+            this.setSlotAlpha(0, percent);
+          },
+          onAlphaSubChange: (percent: number): void => {
+            this.setSlotAlpha(1, percent);
           },
           onUpdateWidgetNow: (): void => {
             this.updateWidgetNow();
@@ -615,6 +625,8 @@ struct Index {
     this.sendCommand({ cmd: BridgeCmdNames.SET_PMA, slot: slot, pma: ui.pma });
     // Web 端 LOAD_MODEL 会 reset（mirrored=false，缩略图管线默认朝向）→ 重载后恢复用户翻转偏好
     this.sendCommand({ cmd: BridgeCmdNames.SET_MIRROR, slot: slot, mirror: ui.mirrored });
+    // 同理：reset 使 alpha 归 1 → 重载后恢复用户透明度偏好
+    this.sendCommand({ cmd: BridgeCmdNames.SET_ALPHA, slot: slot, alpha: ui.alpha / 100 });
   }
 
   /** 用偏好与模型元数据初始化槽位 UI 状态。 */
@@ -648,6 +660,7 @@ struct Index {
     const effectiveSkins = selectedSkins.length > 0 ? selectedSkins : (skins.length > 0 ? [skins[0]] : []);
     const pma = prefs.getBool(SlotPrefs.pmaKey(slot), true);
     const mirrored = prefs.getBool(SlotPrefs.mirrorKey(slot), false);
+    const alpha = clampInt(prefs.getNumber(SlotPrefs.alphaKey(slot), 100), 10, 100);
     this.updateSlotUi(slot, (state: SlotUiState): void => {
       state.animations = animations;
       state.skins = skins;
@@ -655,6 +668,7 @@ struct Index {
       state.selectedSkins = effectiveSkins;
       state.pma = pma;
       state.mirrored = mirrored;
+      state.alpha = alpha;
     });
   }
 
@@ -1347,6 +1361,20 @@ struct Index {
     const prefs = this.prefs;
     if (prefs !== null) {
       prefs.putBool(SlotPrefs.mirrorKey(slot), mirrored);
+      prefs.flush();
+    }
+  }
+
+  /** 设置页：槽位整体透明度百分比（10-100，持久化 + 下发 Web skeleton.color.a）。 */
+  private setSlotAlpha(slot: number, percent: number): void {
+    const value = clampInt(Math.round(percent), 10, 100);
+    this.updateSlotUi(slot, (state: SlotUiState): void => {
+      state.alpha = value;
+    });
+    this.sendCommand({ cmd: BridgeCmdNames.SET_ALPHA, slot: slot, alpha: value / 100 });
+    const prefs = this.prefs;
+    if (prefs !== null) {
+      prefs.putNumber(SlotPrefs.alphaKey(slot), value);
       prefs.flush();
     }
   }

@@ -24,6 +24,8 @@ export class PrefsKeys {
   static readonly PMA2_ENABLED: string = 'pma2_enabled';
   static readonly MODEL_MIRRORED: string = 'model_mirrored';
   static readonly MODEL2_MIRRORED: string = 'model2_mirrored';
+  static readonly MODEL_ALPHA: string = 'model_alpha';
+  static readonly MODEL2_ALPHA: string = 'model2_alpha';
   static readonly BG_COLOR: string = 'bg_color';
   static readonly BG_IMAGE_PATH: string = 'bg_image_path';
 
@@ -69,6 +71,10 @@ export class SlotPrefs {
 
   static mirrorKey(slot: number): string {
     return slot === 1 ? PrefsKeys.MODEL2_MIRRORED : PrefsKeys.MODEL_MIRRORED;
+  }
+
+  static alphaKey(slot: number): string {
+    return slot === 1 ? PrefsKeys.MODEL2_ALPHA : PrefsKeys.MODEL_ALPHA;
   }
 }
 

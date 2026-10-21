@@ -70,6 +70,7 @@
     this.textures = [];
     this.visible = true; // 槽位显隐（会话级开关，隐藏时渲染循环整体跳过）
     this.mirrored = false; // 槽位水平镜像（scaleX 取反，按槽位持久化偏好恢复）
+    this.alpha = 1; // 槽位整体透明度（skeleton.color.a，按槽位持久化偏好恢复；LOAD_MODEL 重置为 1，缩略图天然不透明）
   };
 
   var slots = [new SlotState(), new SlotState()];
@@ -607,6 +608,14 @@
     }
   }
 
+  function cmdSetAlpha(msg) {
+    var slotIdx = clampSlot(msg.slot);
+    var slot = slots[slotIdx];
+    // 骨架未就绪只存值：渲染循环每帧幂等写入 skeleton.color.a
+    slot.alpha = Math.min(1, Math.max(0, +msg.alpha || 1));
+    renderFrame(0);
+  }
+
   function cmdClearSlot(msg) {
     var slotIdx = clampSlot(msg.slot);
     disposeSlot(slotIdx);
@@ -743,6 +752,8 @@
         }
       }
       applySkeletonTransform(idx);
+      // 整体透明度：每帧幂等应用（加载后新骨架默认 1，命令早到/后到均覆盖）
+      slot.skeleton.color.a = slot.alpha;
       if (slot.version === '4.2' && slot.rt) {
         // 4.2 运行时必须显式指定物理模式，无参会抛错
         slot.skeleton.updateWorldTransform(slot.rt.Physics.update);
@@ -1016,7 +1027,8 @@
     clearSlot: cmdClearSlot,
     setGestureSlot: cmdSetGestureSlot,
     setSlotVisible: cmdSetSlotVisible,
-    setMirror: cmdSetMirror
+        setMirror: cmdSetMirror,
+        setAlpha: cmdSetAlpha
   };
 
   window.SpineHost = {
