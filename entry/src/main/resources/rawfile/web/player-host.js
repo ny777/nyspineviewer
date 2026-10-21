@@ -776,7 +776,9 @@
   var gesture = {
     mode: null, // 'drag' | 'pinch' | null
     startTouches: [], // [{x, y}]
-    startTransform: null,
+    // 群组手势基线：参与手势的可见槽位列表 [{idx, scale, x, y}]
+    // （整体模式：一指拖动/双指捏合同时作用于全部可见模型，隐藏槽零交互）
+    startTransforms: [],
     startDistance: 0,
     moved: false,
     downTime: 0
@@ -796,17 +798,33 @@
     return Math.sqrt(dx * dx + dy * dy);
   }
 
-  function onGestureEnd() {
-    var slot = slots[gestureSlot];
-    if (!slot.skeleton) {
-      return;
+  /** 收集参与群组手势的槽位（已加载且可见），冻结各自变换基线。 */
+  function visibleTransforms() {
+    var list = [];
+    for (var i = 0; i < slots.length; i++) {
+      var s = slots[i];
+      if (s.skeleton && s.visible) {
+        list.push({ idx: i, scale: s.transform.scale, x: s.transform.x, y: s.transform.y });
+      }
     }
-    bridgeCall('onTransformChanged', JSON.stringify({
-      slot: gestureSlot,
-      scale: slot.transform.scale,
-      x: slot.transform.x,
-      y: slot.transform.y
-    }));
+    return list;
+  }
+
+  function onGestureEnd() {
+    // 逐槽持久化：群组手势结束时每个参与的可见槽各发一条 onTransformChanged
+    for (var k = 0; k < gesture.startTransforms.length; k++) {
+      var t = gesture.startTransforms[k];
+      var slot = slots[t.idx];
+      if (!slot.skeleton) {
+        continue;
+      }
+      bridgeCall('onTransformChanged', JSON.stringify({
+        slot: t.idx,
+        scale: slot.transform.scale,
+        x: slot.transform.x,
+        y: slot.transform.y
+      }));
+    }
   }
 
   function handleTap() {
@@ -814,7 +832,7 @@
       return;
     }
     var slot = slots[gestureSlot];
-    if (!slot.skeletonData || slot.status !== 'loaded') {
+    if (!slot.skeletonData || slot.status !== 'loaded' || !slot.visible) {
       return;
     }
     var anims = slot.skeletonData.animations || [];
@@ -847,26 +865,17 @@
   canvas.addEventListener('touchstart', function (e) {
     e.preventDefault();
     var points = touchPoints(e.touches);
-    var slot = slots[gestureSlot];
     if (points.length === 1) {
       gesture.mode = 'drag';
       gesture.startTouches = points;
-      gesture.startTransform = {
-        scale: slot.transform.scale,
-        x: slot.transform.x,
-        y: slot.transform.y
-      };
+      gesture.startTransforms = visibleTransforms();
       gesture.moved = false;
       gesture.downTime = Date.now();
     } else if (points.length >= 2) {
       gesture.mode = 'pinch';
       gesture.startTouches = points.slice(0, 2);
       gesture.startDistance = distance(points[0], points[1]);
-      gesture.startTransform = {
-        scale: slot.transform.scale,
-        x: slot.transform.x,
-        y: slot.transform.y
-      };
+      gesture.startTransforms = visibleTransforms();
       gesture.moved = true; // 双指不算 tap
     }
   }, { passive: false });
@@ -874,26 +883,38 @@
   canvas.addEventListener('touchmove', function (e) {
     e.preventDefault();
     var points = touchPoints(e.touches);
-    var slot = slots[gestureSlot];
-    if (!slot.skeleton) {
-      return;
-    }
     var size = cssSize();
-    if (gesture.mode === 'drag' && points.length >= 1 && gesture.startTransform) {
+    if (gesture.mode === 'drag' && points.length >= 1 && gesture.startTransforms.length > 0) {
       var dx = points[0].x - gesture.startTouches[0].x;
       var dy = points[0].y - gesture.startTouches[0].y;
       if (Math.abs(dx) > TAP_SLOP_PX || Math.abs(dy) > TAP_SLOP_PX) {
         gesture.moved = true;
       }
-      slot.transform.x = gesture.startTransform.x + dx / size.w;
-      slot.transform.y = gesture.startTransform.y - dy / size.h; // 屏幕 y 向下，世界 y 向上
+      // 整体拖动：全部参与槽位应用同一位移（隐藏槽零交互）
+      for (var k = 0; k < gesture.startTransforms.length; k++) {
+        var t = gesture.startTransforms[k];
+        var slot = slots[t.idx];
+        if (!slot.visible) {
+          continue; // 手势中途被隐藏的槽不再移动
+        }
+        slot.transform.x = t.x + dx / size.w;
+        slot.transform.y = t.y - dy / size.h; // 屏幕 y 向下，世界 y 向上
+      }
       renderFrame(0);
-    } else if (gesture.mode === 'pinch' && points.length >= 2 && gesture.startDistance > 0) {
+    } else if (gesture.mode === 'pinch' && points.length >= 2 && gesture.startDistance > 0 &&
+      gesture.startTransforms.length > 0) {
       var dist = distance(points[0], points[1]);
       var factor = dist / gesture.startDistance;
-      var next = gesture.startTransform.scale * factor;
-      next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, next));
-      slot.transform.scale = next;
+      // 整体缩放：全部参与槽位应用同一缩放系数
+      for (var j = 0; j < gesture.startTransforms.length; j++) {
+        var tj = gesture.startTransforms[j];
+        var s = slots[tj.idx];
+        if (!s.visible) {
+          continue;
+        }
+        var next = tj.scale * factor;
+        s.transform.scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, next));
+      }
       renderFrame(0);
     }
   }, { passive: false });
@@ -915,13 +936,8 @@
     } else if (remaining === 1 && gesture.mode === 'pinch') {
       // 双指变单指：重置拖拽基准，避免跳变
       gesture.mode = 'drag';
-      var slot = slots[gestureSlot];
       gesture.startTouches = touchPoints(e.touches);
-      gesture.startTransform = {
-        scale: slot.transform.scale,
-        x: slot.transform.x,
-        y: slot.transform.y
-      };
+      gesture.startTransforms = visibleTransforms();
     }
   }, { passive: false });
 
