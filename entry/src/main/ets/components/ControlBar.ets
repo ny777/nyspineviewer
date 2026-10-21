@@ -1,9 +1,9 @@
 /**
  * 播放页悬浮控制条（双行式）：
  * 行1 = 播放/暂停、水平镜像（当前控制目标槽位，启用高亮）、重置变换、
- *       槽位显隐开关（主/副紧凑单字，点按=显示/隐藏、长按=切换控制目标，靠右）；
+ *       动画 chip（点按弹菜单，最右）；
  * 行2 = 清空当前槽位图标、截图（SaveButton 安全组件，点击临时授权直存系统图库）、
- *       皮肤多选横向滚动、动画 chip（点按弹菜单，最右）。
+ *       皮肤多选横向滚动、槽位显隐开关（主/副紧凑单字，点按=显示/隐藏、长按=切换控制目标，靠右）。
  */
 import { getTheme, ThemeColors } from '../core/Theme';
 
@@ -99,48 +99,22 @@ export struct ControlBar {
         Blank()
           .layoutWeight(1)
 
-        // 槽位显隐开关：主/副紧凑单字拼接 pill（锁定开关），靠右
-        // 按下态（显示）=cardSelected 高亮+白字；弹起态（隐藏）=无边框透明底纯文字；
-        // 控制目标不再用颜色区分（长按选择，动画名 chip 隐式指示）；点按=切换显隐
-        Text($r('app.string.slot_main_short'))
+        // 动画 chip：点按弹菜单（行1 靠右）
+        Text(this.currentAnimation.length > 0 ? this.currentAnimation : $r('app.string.no_animation'))
           .fontSize(12)
-          .fontWeight(FontWeight.Medium)
-          .textAlign(TextAlign.Center)
-          .width(32)
-          .height(32)
-          .backgroundColor(!this.slot0Visible ? Color.Transparent : this.theme().cardSelected)
-          .fontColor(this.slot0Visible ? Color.White : this.theme().textSecondary)
-          .borderRadius({ topLeft: 16, bottomLeft: 16 })
-          .accessibilityText($r('app.string.a11y_slot_vis_main'))
-          .onClick(() => {
-            this.onSlotToggleVisible(0);
-          })
-          .gesture(LongPressGesture({ repeat: false })
-            .onAction(() => {
-              this.onSlotChange(0);
-            }))
-        Text($r('app.string.slot_sub_short'))
-          .fontSize(12)
-          .fontWeight(FontWeight.Medium)
-          .textAlign(TextAlign.Center)
-          .width(32)
-          .height(32)
-          .backgroundColor(!this.slot1Visible ? Color.Transparent : this.theme().cardSelected)
-          .fontColor(this.slot1Visible ? Color.White : this.theme().textSecondary)
-          .borderRadius({ topRight: 16, bottomRight: 16 })
-          .accessibilityText($r('app.string.a11y_slot_vis_sub'))
-          .onClick(() => {
-            this.onSlotToggleVisible(1);
-          })
-          .gesture(LongPressGesture({ repeat: false })
-            .onAction(() => {
-              this.onSlotChange(1);
-            }))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .constraintSize({ maxWidth: 90 })
+          .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+          .borderRadius(13)
+          .backgroundColor(this.theme().chip)
+          .fontColor(this.theme().text)
+          .bindMenu(this.AnimationMenuBuilder)
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
 
-      // 行2：清空、截图 + 皮肤 chips 滚动 + 动画 chip（最右）
+      // 行2：清空、截图 + 皮肤 chips 滚动 + 槽位显隐开关（靠右）
       Row({ space: 8 }) {
         // 清空当前槽位图标
         Button() {
@@ -188,17 +162,43 @@ export struct ControlBar {
         .layoutWeight(1)
         .align(Alignment.Center)
 
-        // 动画 chip：点按弹菜单
-        Text(this.currentAnimation.length > 0 ? this.currentAnimation : $r('app.string.no_animation'))
+        // 槽位显隐开关：主/副紧凑单字拼接 pill（锁定开关），靠右
+        // 按下态（显示）=cardSelected 高亮+白字；弹起态（隐藏）=无边框透明底纯文字；
+        // 控制目标不再用颜色区分（长按选择，动画名 chip 隐式指示）；点按=切换显隐
+        Text($r('app.string.slot_main_short'))
           .fontSize(12)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .constraintSize({ maxWidth: 90 })
-          .padding({ left: 10, right: 10, top: 5, bottom: 5 })
-          .borderRadius(13)
-          .backgroundColor(this.theme().chip)
-          .fontColor(this.theme().text)
-          .bindMenu(this.AnimationMenuBuilder)
+          .fontWeight(FontWeight.Medium)
+          .textAlign(TextAlign.Center)
+          .width(32)
+          .height(32)
+          .backgroundColor(!this.slot0Visible ? Color.Transparent : this.theme().cardSelected)
+          .fontColor(this.slot0Visible ? Color.White : this.theme().textSecondary)
+          .borderRadius({ topLeft: 16, bottomLeft: 16 })
+          .accessibilityText($r('app.string.a11y_slot_vis_main'))
+          .onClick(() => {
+            this.onSlotToggleVisible(0);
+          })
+          .gesture(LongPressGesture({ repeat: false })
+            .onAction(() => {
+              this.onSlotChange(0);
+            }))
+        Text($r('app.string.slot_sub_short'))
+          .fontSize(12)
+          .fontWeight(FontWeight.Medium)
+          .textAlign(TextAlign.Center)
+          .width(32)
+          .height(32)
+          .backgroundColor(!this.slot1Visible ? Color.Transparent : this.theme().cardSelected)
+          .fontColor(this.slot1Visible ? Color.White : this.theme().textSecondary)
+          .borderRadius({ topRight: 16, bottomRight: 16 })
+          .accessibilityText($r('app.string.a11y_slot_vis_sub'))
+          .onClick(() => {
+            this.onSlotToggleVisible(1);
+          })
+          .gesture(LongPressGesture({ repeat: false })
+            .onAction(() => {
+              this.onSlotChange(1);
+            }))
       }
       .width('100%')
       .alignItems(VerticalAlign.Center)
