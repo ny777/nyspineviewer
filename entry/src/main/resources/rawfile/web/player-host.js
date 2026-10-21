@@ -1,5 +1,5 @@
 /**
- * Spine 播放宿主（ArkWeb ↔ spine-ts 多版本运行时 4.0 / 4.1 / 4.2）。
+ * Spine 播放宿主（ArkWeb ↔ spine-ts 多版本运行时 3.8 / 4.0 / 4.1 / 4.2）。
  *
  * 行为蓝本（SpineV41Adapter.kt / SpineGlRenderer.kt）：
  *  - AnimationStateData.defaultMix = 0.2
@@ -122,7 +122,7 @@
     }));
   }
 
-  // ==================== 运行时加载（版本分发器，支持 4.0 / 4.1 / 4.2） ====================
+  // ==================== 运行时加载（版本分发器，支持 3.8 / 4.0 / 4.1 / 4.2） ====================
 
   function ensureRuntime(version) {
     return new Promise(function (resolve, reject) {
@@ -201,6 +201,27 @@
     });
   }
 
+  // 3.8 专用：轻量预解析 atlas 文本，提取 page 名与 mipmap 标记。
+  // 与 3.8 TextureAtlas 的块解析对齐：trim；空行结束当前 page 块；无当前 page 时该行为 page 名。
+  function parseAtlasPages(atlasText) {
+    var result = [];
+    var lines = String(atlasText).split(/\r\n|\r|\n/);
+    var currentPage = null;
+    var i;
+    for (i = 0; i < lines.length; i++) {
+      var line = lines[i].trim();
+      if (line.length === 0) {
+        currentPage = null;
+      } else if (currentPage === null) {
+        currentPage = { name: line, mipmaps: false };
+        result.push(currentPage);
+      } else if (/mipmap/i.test(line)) {
+        currentPage.mipmaps = true;
+      }
+    }
+    return result;
+  }
+
   // ==================== 命令处理 ====================
 
   function cmdLoadModel(msg) {
@@ -227,6 +248,30 @@
 
     ensureRuntime(slot.version).then(function (spine) {
       return fetchText(modelUrl(slot.modelId, slot.atlasFile)).then(function (atlasText) {
+        if (slot.version === '3.8') {
+          // 3.8: TextureAtlas 构造需要同步 textureLoader（解析期立即 setFilters 且用贴图尺寸计算 UV），
+          // 必须先并行加载全部 page 图，再以同步 loader 构造 atlas；纹理归 slot.textures 统一释放。
+          var pages38 = parseAtlasPages(atlasText);
+          var jobs38 = [];
+          var j;
+          for (j = 0; j < pages38.length; j++) {
+            jobs38.push(loadImage(modelUrl(slot.modelId, pages38[j].name)));
+          }
+          return Promise.all(jobs38).then(function (imgs) {
+            var imgMap = {};
+            var mipMap = {};
+            var k;
+            for (k = 0; k < pages38.length; k++) {
+              imgMap[pages38[k].name] = imgs[k];
+              mipMap[pages38[k].name] = pages38[k].mipmaps;
+            }
+            return new spine.TextureAtlas(atlasText, function (path) {
+              var texture = new spine.GLTexture(gl, imgMap[path], !!mipMap[path]);
+              slot.textures.push(texture);
+              return texture;
+            });
+          });
+        }
         var atlas = new spine.TextureAtlas(atlasText);
         var pages = atlas.pages || [];
         var textureJobs = [];

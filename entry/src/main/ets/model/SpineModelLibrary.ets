@@ -491,7 +491,8 @@ export class SpineModelLibrary {
       const versionStr = spineVersionToString(detected.version);
       const formatStr = detected.format;
 
-      // 动画/皮肤名：JSON 直接读取；二进制 4.0/4.1/4.2 离线预解析（失败回退占位，加载后回填兜底）
+      // 动画/皮肤名：JSON 直接读取；二进制 4.0/4.1/4.2 离线预解析（失败回退占位，加载后回填兜底）；
+      // 3.8 二进制不做离线预解析，走占位 + 播放后回填（web 端解析真实名回报）
       let animations = new Array<string>();
       let skins = new Array<string>();
       if (formatStr === 'JSON') {

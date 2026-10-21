@@ -3,7 +3,7 @@
  */
 
 /** 已集成 runtime bundle 的版本（runtimes/spine-<version>.js 必须存在）。 */
-const SUPPORTED_VERSIONS: Array<string> = ['4.0', '4.1', '4.2'];
+const SUPPORTED_VERSIONS: Array<string> = ['3.8', '4.0', '4.1', '4.2'];
 
 export class SpineModelItem {
   id: string;
@@ -46,7 +46,7 @@ export class SpineModelItem {
     this.contentHash = contentHash;
   }
 
-  /** 当前集成的 runtime 是否可直接播放（4.0 / 4.1 / 4.2）。 */
+  /** 当前集成的 runtime 是否可直接播放（3.8 / 4.0 / 4.1 / 4.2）。 */
   isSupported(): boolean {
     return SUPPORTED_VERSIONS.indexOf(this.version) >= 0;
   }

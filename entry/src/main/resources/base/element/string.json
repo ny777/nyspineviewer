@@ -222,7 +222,7 @@
     },
     {
       "name": "toast_unsupported",
-      "value": "当前集成 Spine 4.0 / 4.1 / 4.2 运行时，暂不支持该版本模型"
+      "value": "当前集成 Spine 3.8 / 4.0 / 4.1 / 4.2 运行时，暂不支持该版本模型"
     },
     {
       "name": "toast_capture_ok",
@@ -414,7 +414,7 @@
     },
     {
       "name": "version_playable_value",
-      "value": "4.0 / 4.1 / 4.2"
+      "value": "3.8 / 4.0 / 4.1 / 4.2"
     },
     {
       "name": "version_detectable_label",

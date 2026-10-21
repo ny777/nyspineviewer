@@ -33,8 +33,9 @@
 
 | Spine 版本 | 状态 |
 | --- | --- |
+| 3.8 | ✅ 可播放（JSON 或 SKEL 二进制 + atlas） |
 | 4.0 / 4.1 / 4.2 | ✅ 可播放（JSON 或 SKEL 二进制 + atlas） |
-| 3.5 – 3.8、4.3 | ⚠️ 可自动识别并标注版本，运行时暂未集成 |
+| 3.5 – 3.7、4.3 | ⚠️ 可自动识别并标注版本，运行时暂未集成 |
 
 ## 技术架构
 
@@ -43,7 +44,7 @@ ArkUI（ArkTS，声明式）
 ├─ Index.ets ─ Tabs：播放 / 模型库 / 设置
 │   └─ SpineWebView ── Bridge 协议（JSON 消息）──▶ WebView
 │                                                   ├─ player-host.js（宿主适配层）
-│                                                   └─ spine-ts WebGL 运行时（4.0 / 4.1 / 4.2）
+  │                                                   └─ spine-ts WebGL 运行时（3.8 / 4.0 / 4.1 / 4.2）
 ├─ model/ SpineModelLibrary（导入 / 索引 / 分组 / 回收站，沙箱文件存储）
 ├─ widget/ EntryFormAbility（桌面卡片快照）
 └─ Preferences（设置持久化）
@@ -90,7 +91,7 @@ entry/src/main/resources/rawfile/web/   WebView 渲染层（player-host.js + spi
 ## 已知限制
 
 - 模拟器无 WebGL，不能渲染动画，需真机运行
-- Spine 3.x / 4.3 运行时暂未集成（识别但不可播放）
+- Spine 3.5 – 3.7 / 4.3 运行时暂未集成（识别但不可播放）
 - 仅适配手机（竖屏）
 
 ## License
