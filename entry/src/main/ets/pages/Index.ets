@@ -122,6 +122,12 @@ struct Index {
   @State widgetAutoUpdate: boolean = false;
   /** 播放页屏幕常亮（默认开，设置页可关）。 */
   @State keepScreenOn: boolean = true;
+  /** 定时随机轮换动画开关（默认关，设置页调整）。 */
+  @State rotationEnabled: boolean = false;
+  /** 轮换间隔（秒，10-600 钳制，默认 60）。 */
+  @State rotationIntervalSec: number = 60;
+  /** 轮换定时器 id（-1 表示未运行）。 */
+  private rotationTimerId: number = -1;
   @State bgColor: string = '#0F172A';
   /** 背景图文件名（<filesDir>/bg/ 内，空串表示未设置）。 */
   @State bgImageName: string = '';
@@ -201,6 +207,9 @@ struct Index {
     this.widgetAutoUpdate = prefs.getBool(PrefsKeys.WIDGET_AUTO_UPDATE, false);
     this.keepScreenOn = prefs.getBool(PrefsKeys.KEEP_SCREEN_ON, true);
     this.applyKeepScreenOn();
+    this.rotationEnabled = prefs.getBool(PrefsKeys.ANIMATION_ROTATION_ENABLED, false);
+    this.rotationIntervalSec = clampInt(prefs.getNumber(PrefsKeys.ANIMATION_ROTATION_INTERVAL, 60), 10, 600);
+    this.updateRotationTimer();
     this.bgColor = intColorToHex(prefs.getNumber(PrefsKeys.BG_COLOR, PrefsManager.defaultBgColor));
     this.bgImageName = prefs.getString(PrefsKeys.BG_IMAGE_PATH, '');
     this.bgFavorites = this.loadBgFavorites(prefs);
@@ -210,6 +219,7 @@ struct Index {
   }
 
   aboutToDisappear(): void {
+    this.clearRotationTimer();
     this.clearCaptureTimer();
     this.clearWidgetTimer();
   }
@@ -219,6 +229,7 @@ struct Index {
       this.pausedByHide = true;
       this.playing = false;
       this.sendCommand({ cmd: BridgeCmdNames.SET_PLAYING, playing: false });
+      this.updateRotationTimer();
     }
   }
 
@@ -233,6 +244,7 @@ struct Index {
       if (!this.playing) {
         this.playing = true;
         this.sendCommand({ cmd: BridgeCmdNames.SET_PLAYING, playing: true });
+        this.updateRotationTimer();
       }
     }
   }
@@ -297,7 +309,7 @@ struct Index {
                   this.toggleMirror();
                 },
                 onAnimationPick: (name: string): void => {
-                  this.pickAnimation(name);
+                  this.pickAnimation(this.selectedSlot, name, true);
                 },
                 onSkinToggle: (name: string): void => {
                   this.toggleSkin(name);
@@ -409,6 +421,8 @@ struct Index {
           fps: this.fps,
           widgetAutoUpdate: this.widgetAutoUpdate,
           keepScreenOn: this.keepScreenOn,
+          rotationEnabled: this.rotationEnabled,
+          rotationInterval: this.rotationIntervalSec,
           onPmaMainChange: (pma: boolean): void => {
             this.togglePma(0, pma);
           },
@@ -426,6 +440,12 @@ struct Index {
           },
           onKeepScreenOnChange: (enabled: boolean): void => {
             this.toggleKeepScreenOn(enabled);
+          },
+          onRotationEnabledChange: (enabled: boolean): void => {
+            this.toggleRotation(enabled);
+          },
+          onRotationIntervalChange: (sec: number): void => {
+            this.changeRotationInterval(sec);
           },
           onUpdateWidgetNow: (): void => {
             this.updateWidgetNow();
@@ -474,6 +494,8 @@ struct Index {
         this.sendCommand({ cmd: BridgeCmdNames.SET_PLAYING, playing: false });
       }
     }
+    // playing/页签均可能变化，须在状态收敛后重估轮换定时器
+    this.updateRotationTimer();
   }
 
   // ==================== Web 就绪与命令发送 ====================
@@ -1198,19 +1220,88 @@ struct Index {
   private togglePlay(): void {
     this.playing = !this.playing;
     this.sendCommand({ cmd: BridgeCmdNames.SET_PLAYING, playing: this.playing });
+    this.updateRotationTimer();
   }
 
-  private pickAnimation(name: string): void {
-    const slot = this.selectedSlot;
+  /** 手动选动画（持久化）与轮换切换（会话级）共用：persist=false 时不写偏好。 */
+  private pickAnimation(slot: number, name: string, persist: boolean): void {
     this.updateSlotUi(slot, (state: SlotUiState): void => {
       state.currentAnimation = name;
     });
     this.sendCommand({ cmd: BridgeCmdNames.PLAY_ANIMATION, slot: slot, name: name, loop: true });
     const prefs = this.prefs;
-    if (prefs !== null) {
+    if (persist && prefs !== null) {
       prefs.putString(SlotPrefs.animationKey(slot), name);
       prefs.flush();
     }
+  }
+
+  /** 定时随机轮换动画：为显示中的槽位各自随机换一个不同于当前的动画（双槽独立）。 */
+  private rotateAnimations(): void {
+    // 缩略图管线/截帧期间槽位被临时占用，避让
+    if (this.thumbGenerating || this.capturing) {
+      return;
+    }
+    for (let slot = 0; slot < 2; slot++) {
+      if (!this.slotVisible[slot]) {
+        continue;
+      }
+      const ui = this.slotUi[slot];
+      if (ui.animations.length < 2) {
+        continue;
+      }
+      const pool = ui.animations.filter((name: string): boolean => name !== ui.currentAnimation);
+      if (pool.length === 0) {
+        continue;
+      }
+      const chosen = pool[Math.floor(Math.random() * pool.length)];
+      // 轮换不写偏好：重启后回到手动保存的动画
+      this.pickAnimation(slot, chosen, false);
+    }
+  }
+
+  /** 重估轮换定时器：开启且播放中且在播放页时运行，否则清除。 */
+  private updateRotationTimer(): void {
+    this.clearRotationTimer();
+    if (!this.rotationEnabled || !this.playing || this.currentTabIndex !== 0) {
+      return;
+    }
+    this.rotationTimerId = setInterval((): void => {
+      this.rotateAnimations();
+    }, this.rotationIntervalSec * 1000);
+  }
+
+  private clearRotationTimer(): void {
+    if (this.rotationTimerId !== -1) {
+      clearInterval(this.rotationTimerId);
+      this.rotationTimerId = -1;
+    }
+  }
+
+  /** 设置页：轮换开关（持久化 + 定时器重估）。 */
+  private toggleRotation(enabled: boolean): void {
+    this.rotationEnabled = enabled;
+    const prefs = this.prefs;
+    if (prefs !== null) {
+      prefs.putBool(PrefsKeys.ANIMATION_ROTATION_ENABLED, enabled);
+      prefs.flush();
+    }
+    this.updateRotationTimer();
+  }
+
+  /** 设置页：轮换间隔秒数（钳制 10-600，持久化 + 定时器重启）。 */
+  private changeRotationInterval(sec: number): void {
+    const value = clampInt(sec, 10, 600);
+    if (value === this.rotationIntervalSec) {
+      return;
+    }
+    this.rotationIntervalSec = value;
+    const prefs = this.prefs;
+    if (prefs !== null) {
+      prefs.putNumber(PrefsKeys.ANIMATION_ROTATION_INTERVAL, value);
+      prefs.flush();
+    }
+    this.updateRotationTimer();
   }
 
   private toggleSkin(name: string): void {

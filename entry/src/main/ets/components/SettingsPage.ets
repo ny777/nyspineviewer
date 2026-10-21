@@ -13,7 +13,10 @@ export struct SettingsPage {
   @Prop @Watch('onFpsPropChange') fps: number = 60;
   @Prop widgetAutoUpdate: boolean = false;
   @Prop keepScreenOn: boolean = true;
+  @Prop rotationEnabled: boolean = false;
+  @Prop @Watch('onRotationIntervalPropChange') rotationInterval: number = 60;
   @State fpsPreview: number = 60;
+  @State rotationPreview: number = 60;
   onPmaMainChange: (pma: boolean) => void = (pma: boolean) => {
   };
   onPmaSubChange: (pma: boolean) => void = (pma: boolean) => {
@@ -25,6 +28,10 @@ export struct SettingsPage {
   onWidgetAutoUpdateChange: (enabled: boolean) => void = (enabled: boolean) => {
   };
   onKeepScreenOnChange: (enabled: boolean) => void = (enabled: boolean) => {
+  };
+  onRotationEnabledChange: (enabled: boolean) => void = (enabled: boolean) => {
+  };
+  onRotationIntervalChange: (sec: number) => void = (sec: number) => {
   };
   onUpdateWidgetNow: () => void = () => {
   };
@@ -45,10 +52,26 @@ export struct SettingsPage {
 
   aboutToAppear(): void {
     this.fpsPreview = this.fps;
+    this.rotationPreview = this.rotationInterval;
   }
 
   private onFpsPropChange(): void {
     this.fpsPreview = this.fps;
+  }
+
+  private onRotationIntervalPropChange(): void {
+    this.rotationPreview = this.rotationInterval;
+  }
+
+  /** 轮换间隔预览：<60 秒 → "N 秒"；整分 → "N 分钟"；否则 → "M 分 S 秒"。 */
+  private formatInterval(sec: number): Resource {
+    if (sec < 60) {
+      return $r('app.string.interval_unit_seconds', sec);
+    }
+    if (sec % 60 === 0) {
+      return $r('app.string.interval_unit_minutes', Math.round(sec / 60));
+    }
+    return $r('app.string.interval_preview_mix', Math.floor(sec / 60), sec % 60);
   }
 
   build() {
@@ -279,6 +302,58 @@ export struct SettingsPage {
       .width('100%')
       .padding({ left: 16, right: 16, top: 12, bottom: 12 })
       .alignItems(VerticalAlign.Center)
+
+      Divider()
+        .color(this.theme().divider)
+        .width('100%')
+
+      Row({ space: 8 }) {
+        Column({ space: 2 }) {
+          Text($r('app.string.settings_rotation_enabled'))
+            .fontSize(15)
+            .fontColor(this.theme().text)
+          Text($r('app.string.settings_rotation_enabled_desc'))
+            .fontSize(12)
+            .fontColor(this.theme().textMuted)
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+        Toggle({ type: ToggleType.Switch, isOn: this.rotationEnabled })
+          .onChange((isOn: boolean) => {
+            this.onRotationEnabledChange(isOn);
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+      .alignItems(VerticalAlign.Center)
+
+      Divider()
+        .color(this.theme().divider)
+        .width('100%')
+
+      // 间隔滑杆：开关关闭时半透明弱化，但仍可预调
+      Row({ space: 10 }) {
+        Text($r('app.string.settings_rotation_interval'))
+          .fontSize(15)
+          .fontColor(this.theme().text)
+        Text(this.formatInterval(this.rotationPreview))
+          .fontSize(14)
+          .fontColor(this.theme().textSecondary)
+          .constraintSize({ maxWidth: 120 })
+          .textAlign(TextAlign.End)
+        Slider({ value: this.rotationInterval, min: 10, max: 600, step: 5, style: SliderStyle.OutSet })
+          .layoutWeight(1)
+          .onChange((value: number, mode: SliderChangeMode) => {
+            this.rotationPreview = Math.round(value);
+            if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+              this.onRotationIntervalChange(Math.round(value));
+            }
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 10, bottom: 14 })
+      .alignItems(VerticalAlign.Center)
+      .opacity(this.rotationEnabled ? 1 : 0.4)
     }
     .width('100%')
   }

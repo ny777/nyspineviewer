@@ -34,6 +34,8 @@ export class PrefsKeys {
   static readonly TAP_SWITCH_ANIMATION: string = 'tap_switch_animation';
   static readonly WIDGET_AUTO_UPDATE: string = 'widget_auto_update';
   static readonly KEEP_SCREEN_ON: string = 'keep_screen_on';
+  static readonly ANIMATION_ROTATION_ENABLED: string = 'animation_rotation_enabled';
+  static readonly ANIMATION_ROTATION_INTERVAL: string = 'animation_rotation_interval';
 }
 
 const PREFS_STORE_NAME = 'spine_wallpaper_prefs';

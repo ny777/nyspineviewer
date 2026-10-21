@@ -477,6 +477,30 @@
       "value": "在播放页浏览模型时保持屏幕不息屏"
     },
     {
+      "name": "settings_rotation_enabled",
+      "value": "定时随机轮换动画"
+    },
+    {
+      "name": "settings_rotation_enabled_desc",
+      "value": "按间隔为显示中的模型随机切换动画"
+    },
+    {
+      "name": "settings_rotation_interval",
+      "value": "轮换间隔"
+    },
+    {
+      "name": "interval_unit_seconds",
+      "value": "%d 秒"
+    },
+    {
+      "name": "interval_unit_minutes",
+      "value": "%d 分钟"
+    },
+    {
+      "name": "interval_preview_mix",
+      "value": "%1$d 分 %2$d 秒"
+    },
+    {
       "name": "settings_widget_update_now",
       "value": "立即更新卡片"
     },
