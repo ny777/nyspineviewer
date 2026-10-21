@@ -46,27 +46,35 @@
     },
     {
       "name": "set_main",
-      "value": "设为主"
+      "value": "设为模型1"
     },
     {
       "name": "set_sub",
-      "value": "设为副"
+      "value": "设为模型2"
+    },
+    {
+      "name": "set_main_short",
+      "value": "1"
+    },
+    {
+      "name": "set_sub_short",
+      "value": "2"
     },
     {
       "name": "slot_main",
-      "value": "主模型"
+      "value": "模型1"
     },
     {
       "name": "slot_sub",
-      "value": "副模型"
+      "value": "模型2"
     },
     {
       "name": "slot_main_short",
-      "value": "主"
+      "value": "1"
     },
     {
       "name": "slot_sub_short",
-      "value": "副"
+      "value": "2"
     },
     {
       "name": "play",
@@ -102,11 +110,11 @@
     },
     {
       "name": "settings_pma_main",
-      "value": "PMA（主模型）"
+      "value": "PMA（模型1）"
     },
     {
       "name": "settings_pma_sub",
-      "value": "PMA（副模型）"
+      "value": "PMA（模型2）"
     },
     {
       "name": "settings_tap_switch",
@@ -354,11 +362,11 @@
     },
     {
       "name": "clear_main_model",
-      "value": "清空主模型"
+      "value": "清空模型1"
     },
     {
       "name": "clear_sub_model",
-      "value": "清空副模型"
+      "value": "清空模型2"
     },
     {
       "name": "tab_play",

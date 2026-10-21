@@ -711,6 +711,7 @@ export struct ModelLibraryPage {
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .constraintSize({ maxWidth: 96 })
+            .flexShrink(1)
             .onClick(() => {
               if (!this.batchMode) {
                 this.onMoveToGroup(model.id);
@@ -720,21 +721,23 @@ export struct ModelLibraryPage {
         .alignItems(VerticalAlign.Center)
         if (!this.batchMode) {
           Row({ space: 6 }) {
-            Button($r('app.string.set_main'))
+            Button($r('app.string.set_main_short'))
               .layoutWeight(1)
               .fontSize(12)
               .height(28)
               .backgroundColor(model.id === this.mainModelId ? this.theme().cardSelected : this.theme().chip)
               .fontColor(model.id === this.mainModelId ? Color.White : this.theme().textSecondary)
+              .accessibilityText($r('app.string.set_main'))
               .onClick(() => {
                 this.onSelectMain(model.id);
               })
-            Button($r('app.string.set_sub'))
+            Button($r('app.string.set_sub_short'))
               .layoutWeight(1)
               .fontSize(12)
               .height(28)
               .backgroundColor(model.id === this.subModelId ? this.theme().cardSelected : this.theme().chip)
               .fontColor(model.id === this.subModelId ? Color.White : this.theme().textSecondary)
+              .accessibilityText($r('app.string.set_sub'))
               .onClick(() => {
                 this.onSelectSub(model.id);
               })
@@ -748,12 +751,12 @@ export struct ModelLibraryPage {
       if (!this.batchMode) {
         Button() {
           SymbolGlyph($r('sys.symbol.xmark'))
-            .fontSize(14)
+            .fontSize(12)
             .fontColor([this.theme().textSecondary])
         }
-        .width(32)
-        .height(32)
-        .borderRadius(16)
+        .width(24)
+        .height(24)
+        .borderRadius(12)
         .backgroundColor(Color.Transparent)
         .padding(0)
         .accessibilityText($r('app.string.a11y_delete_model'))
