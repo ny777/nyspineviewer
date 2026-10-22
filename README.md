@@ -44,7 +44,7 @@ ArkUI（ArkTS，声明式）
 ├─ Index.ets ─ Tabs：播放 / 模型库 / 设置
 │   └─ SpineWebView ── Bridge 协议（JSON 消息）──▶ WebView
 │                                                   ├─ player-host.js（宿主适配层）
-  │                                                   └─ spine-ts WebGL 运行时（3.8 / 4.0 / 4.1 / 4.2）
+│                                                   └─ spine-ts WebGL 运行时（3.8 / 4.0 / 4.1 / 4.2）
 ├─ model/ SpineModelLibrary（导入 / 索引 / 分组 / 回收站，沙箱文件存储）
 ├─ widget/ EntryFormAbility（桌面卡片快照）
 └─ Preferences（设置持久化）
@@ -65,6 +65,8 @@ hvigorw assembleHap
 ```
 
 > 注意：模拟器不支持 WebGL，无法渲染 Spine 动画（仅可调试 UI 布局），功能验证请使用真机。
+
+> 首次拉取本仓库后，部署真机前请在 DevEco Studio 中配置自动签名（File > Project Structure > Signing Configs，勾选 Automatically generate signature）。仓库不包含任何签名材料。
 
 ## 模型导入格式
 
@@ -93,6 +95,21 @@ entry/src/main/resources/rawfile/web/   WebView 渲染层（player-host.js + spi
 - 模拟器无 WebGL，不能渲染动画，需真机运行
 - Spine 3.5 – 3.7 / 4.3 运行时暂未集成（识别但不可播放）
 - 仅适配手机（竖屏）
+
+## 已知问题
+
+- **缩略图管线偏好污染**：批量补全缩略图（`generateThumbs`）期间，临时加载到槽位 0 的模型会经 `ModelLoaded` / `AnimationChanged` 事件回写，覆盖主模型已保存的动画 / 皮肤 / 轮播偏好（待修复，见开发计划 P0）
+- `Index.ets` 约 2300 行，播放 / 导入 / 回收站 / 截帧 / 卡片等状态与逻辑高度集中，待拆分重构（见开发计划 P1）
+- `build-profile.json5` 的历史提交中曾包含本地调试签名材料（最新版本已移除；建议贡献者使用本地自动签名，勿提交签名信息）
+
+## 开发计划
+
+| 优先级 | 事项 | 说明 |
+| --- | --- | --- |
+| P0 | 修复缩略图管线偏好污染 | `generateThumbs` 期间对临时模型跳过槽 0 的 UI 状态更新与偏好持久化 |
+| P1 | 拆分 Index.ets | 抽出截帧协调器 / 缩略图管线 / 桌面卡片协调器，主页面仅保留状态装配与子组件编排 |
+| P2 | 集成 Spine 4.3（及 3.5–3.7）运行时 | 补齐 runtimes bundle、播放版本门禁与二进制预读取分支 |
+| P3 | 杂项优化 | 注释漂移修正、WebView 资源改 fd 直传降低内存峰值、平板适配评估 |
 
 ## License
 
