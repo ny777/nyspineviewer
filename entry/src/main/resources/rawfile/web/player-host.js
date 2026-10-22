@@ -26,6 +26,7 @@
   var MIN_FPS = 15;
   var MAX_FPS = 120;
   var CAPTURE_CHUNK_SIZE = 262144; // 256KB base64 切片
+  var defaultMixSec = 0.2; // 动画过渡混合秒数（AnimationStateData.defaultMix，setMix 可调）
 
   var canvas = document.getElementById('spine-canvas');
   var gl = null;
@@ -71,6 +72,11 @@
     this.visible = true; // 槽位显隐（会话级开关，隐藏时渲染循环整体跳过）
     this.mirrored = false; // 槽位水平镜像（scaleX 取反，按槽位持久化偏好恢复）
     this.alpha = 1; // 槽位整体透明度（skeleton.color.a，按槽位持久化偏好恢复；LOAD_MODEL 重置为 1，缩略图天然不透明）
+    this.speed = 1; // 槽位播放速度 0.25-2（AnimationState.timeScale，按槽位持久化偏好恢复）
+    this.playlist = { enabled: false, names: [], index: 0 }; // 循环轮播列表：各项播完一次 complete 自动推进
+    this.tapMotions = []; // config.json tap_motions：[{area, anim}]（bounding box 命中区域 → 反应动画）
+    this.tapAnimName = ''; // 正在播的点击反应动画名（不改动 currentAnimationName，chip 保持底层动画）
+    this.tapReturnName = ''; // 反应结束后要回放的底层动画名（轮播关闭时使用；轮播开启经 playlist.index 恢复）
   };
 
   var slots = [new SlotState(), new SlotState()];
@@ -239,6 +245,16 @@
     slot.configScale = (typeof msg.configScale === 'number' && isFinite(msg.configScale) && msg.configScale > 0)
       ? msg.configScale : 1;
     slot.idleMotion = typeof msg.idleMotion === 'string' ? msg.idleMotion : '';
+    slot.tapMotions = [];
+    if (msg.tapMotions && msg.tapMotions.length) {
+      for (var tm = 0; tm < msg.tapMotions.length; tm++) {
+        var tmEntry = msg.tapMotions[tm];
+        if (tmEntry && typeof tmEntry.area === 'string' && typeof tmEntry.anim === 'string' &&
+          tmEntry.area.length > 0 && tmEntry.anim.length > 0) {
+          slot.tapMotions.push({ area: tmEntry.area, anim: tmEntry.anim });
+        }
+      }
+    }
 
     if (!slot.modelId || !slot.skelFile || !slot.atlasFile) {
       slot.status = 'error';
@@ -309,8 +325,10 @@
         slot.rt = spine; // 供渲染循环做版本分支（如 4.2 Physics）
         var skeleton = new spine.Skeleton(skeletonData);
         var stateData = new spine.AnimationStateData(skeletonData);
-        stateData.defaultMix = 0.2; // 4.1 行为蓝本
+        stateData.defaultMix = defaultMixSec; // 过渡混合秒数（对齐 4.1 行为蓝本默认 0.2，setMix 可调）
         var animState = new spine.AnimationState(stateData);
+        animState.timeScale = slot.speed; // 槽位播放速度
+        animState.addListener({ complete: function (entry) { onTrackComplete(slotIdx, entry); } });
         slot.skeletonData = skeletonData;
         slot.skeleton = skeleton;
         slot.state = animState;
@@ -344,6 +362,19 @@
             slot: slotIdx,
             name: chosen
           }));
+        }
+        // 轮播恢复：加载命令链中已暂存的 playlist（加载期 SET_PLAYLIST 提前到达）在模型就绪后统一启播；
+        // 起始项 = 当前动画在列表中的位置（无则第 0 项并回报同步）。
+        if (slot.playlist.enabled && slot.playlist.names.length > 0) {
+          var plValid = filterExistingAnimations(slot, slot.playlist.names);
+          if (plValid.length > 0) {
+            slot.playlist.names = plValid;
+            var plStart = plValid.indexOf(slot.currentAnimationName);
+            playPlaylistItem(slotIdx, plStart >= 0 ? plStart : 0, plStart < 0);
+          } else {
+            slot.playlist.enabled = false;
+            slot.playlist.names = [];
+          }
         }
         notifyModelLoaded(slotIdx, slot.modelId, skeletonData);
         renderFrame(0); // 立即出画面，不等下一帧
@@ -404,6 +435,8 @@
     var slot = slots[slotIdx];
     var name = String(msg.name || '');
     var loop = msg.loop !== false;
+    slot.tapAnimName = ''; // 新动画命令清理点击反应残留状态
+    slot.tapReturnName = '';
     slot.desired.animation = name;
     slot.desired.loop = loop;
     if (slot.status === 'loaded') {
@@ -661,6 +694,69 @@
     renderFrame(0);
   }
 
+  // 槽位播放速度 0.25-2（两位小数归一，与 ArkTS 侧同钳制）
+  function cmdSetSpeed(msg) {
+    var slotIdx = clampSlot(msg.slot);
+    var slot = slots[slotIdx];
+    var value = num(msg.speed, 1);
+    slot.speed = Math.min(2, Math.max(0.25, Math.round(value * 100) / 100));
+    if (slot.state) {
+      slot.state.timeScale = slot.speed;
+      renderFrame(0);
+    }
+  }
+
+  // 全局动画过渡混合秒数 0-0.5：后续加载用新值，已加载槽位即时生效
+  function cmdSetMix(msg) {
+    var value = num(msg.mix, 0.2);
+    defaultMixSec = Math.min(0.5, Math.max(0, Math.round(value * 100) / 100));
+    for (var i = 0; i < slots.length; i++) {
+      if (slots[i].state) {
+        slots[i].state.data.defaultMix = defaultMixSec;
+      }
+    }
+    renderFrame(0);
+  }
+
+  // 循环轮播列表：开启时起始项 = 当前动画在列表中的位置（无则第 0 项）；
+  // 关闭时当前动画恢复单动画循环；加载未完成只暂存（cmdLoadModel 末尾统一启播）。
+  function cmdSetPlaylist(msg) {
+    var slotIdx = clampSlot(msg.slot);
+    var slot = slots[slotIdx];
+    var names = [];
+    if (msg.names && msg.names.length) {
+      for (var i = 0; i < msg.names.length; i++) {
+        if (typeof msg.names[i] === 'string' && msg.names[i].length > 0) {
+          names.push(msg.names[i]);
+        }
+      }
+    }
+    slot.playlist.enabled = !!msg.enabled && names.length > 0;
+    slot.playlist.names = names;
+    slot.playlist.index = 0;
+    if (slot.status !== 'loaded') {
+      return;
+    }
+    if (slot.playlist.enabled) {
+      var valid = filterExistingAnimations(slot, names);
+      if (valid.length === 0) {
+        slot.playlist.enabled = false;
+        slot.playlist.names = [];
+        return;
+      }
+      slot.playlist.names = valid;
+      var start = valid.indexOf(slot.currentAnimationName);
+      playPlaylistItem(slotIdx, start >= 0 ? start : 0, start < 0);
+    } else {
+      slot.tapAnimName = '';
+      slot.tapReturnName = '';
+      if (slot.state && slot.currentAnimationName) {
+        playAnimationInternal(slotIdx, slot.currentAnimationName, true, true);
+        renderFrame(0);
+      }
+    }
+  }
+
   function cmdClearSlot(msg) {
     var slotIdx = clampSlot(msg.slot);
     disposeSlot(slotIdx);
@@ -702,6 +798,167 @@
         // 忽略释放失败
       }
     }
+  }
+
+  // ==================== 轮播列表与点击反应 ====================
+
+  /** 过滤 names 至 skeletonData 真实存在的动画（保序，去重不处理）。 */
+  function filterExistingAnimations(slot, names) {
+    var result = [];
+    if (!slot.skeletonData || !slot.skeletonData.animations) {
+      return result;
+    }
+    var anims = slot.skeletonData.animations;
+    for (var i = 0; i < names.length; i++) {
+      for (var k = 0; k < anims.length; k++) {
+        if (anims[k].name === names[i]) {
+          result.push(names[i]);
+          break;
+        }
+      }
+    }
+    return result;
+  }
+
+  /**
+   * 播放轮播列表指定索引项：loop=false 播完一次，由 onTrackComplete 推进下一项。
+   * 不存在的名字向后环形跳过；全部不存在则关闭轮播。notify=true 时回报 onAnimationChanged。
+   */
+  function playPlaylistItem(slotIdx, index, notify) {
+    var slot = slots[slotIdx];
+    if (!slot.state || !slot.skeletonData) {
+      return;
+    }
+    var valid = filterExistingAnimations(slot, slot.playlist.names);
+    if (valid.length === 0) {
+      slot.playlist.enabled = false;
+      slot.playlist.names = [];
+      return;
+    }
+    slot.playlist.names = valid;
+    var i = ((Math.round(index) % valid.length) + valid.length) % valid.length;
+    var name = valid[i];
+    slot.playlist.index = i;
+    try {
+      slot.state.setAnimation(0, name, false);
+      slot.currentAnimationName = name;
+      slot.animationError = false;
+    } catch (e) {
+      notifyError(slotIdx, 'ANIMATION_ERROR', (e && e.message) || e);
+      return;
+    }
+    if (notify) {
+      bridgeCall('onAnimationChanged', JSON.stringify({ slot: slotIdx, name: name }));
+    }
+    renderFrame(0);
+  }
+
+  /** AnimationState complete 监听：点击反应结束 → 恢复；轮播项播完 → 下一项。 */
+  function onTrackComplete(slotIdx, entry) {
+    var slot = slots[slotIdx];
+    if (!slot || !slot.state) {
+      return;
+    }
+    var animName = entry && entry.animation ? entry.animation.name : '';
+    if (slot.tapAnimName && animName === slot.tapAnimName) {
+      restoreAfterTap(slotIdx);
+      return;
+    }
+    if (slot.playlist.enabled && animName === slot.playlist.names[slot.playlist.index]) {
+      playPlaylistItem(slotIdx, slot.playlist.index + 1, true);
+    }
+  }
+
+  /** 点击反应播完恢复：轮播开启 → 重进当前轮播项；否则回放底层动画循环。 */
+  function restoreAfterTap(slotIdx) {
+    var slot = slots[slotIdx];
+    slot.tapAnimName = '';
+    if (slot.playlist.enabled && slot.playlist.names.length > 0 && slot.state) {
+      playPlaylistItem(slotIdx, slot.playlist.index, false);
+    } else if (slot.tapReturnName && slot.state) {
+      playAnimationInternal(slotIdx, slot.tapReturnName, true, true);
+      renderFrame(0);
+    }
+    slot.tapReturnName = '';
+  }
+
+  /**
+   * config.json tap_motions 命中检测：世界坐标（y 向上）→ SkeletonBounds.containsPoint
+   * 返回 BoundingBoxAttachment；先按 attachment 名匹配，再按承载 slot 名匹配。
+   * 模型完全无 bounding box 时回退第一个 tap motion（整模型可点）。
+   */
+  function findTapMotionAt(slotIdx, pt) {
+    var slot = slots[slotIdx];
+    if (!slot.skeleton || !slot.skeletonData || !slot.rt || slot.tapMotions.length === 0) {
+      return '';
+    }
+    var size = cssSize();
+    var wx = pt.x;
+    var wy = size.h - pt.y; // 屏幕 y 向下，世界 y 向上
+    var bounds = new slot.rt.SkeletonBounds();
+    bounds.update(slot.skeleton, false);
+    var bbox = bounds.containsPoint(wx, wy);
+    if (!bbox) {
+      if (bounds.boundingBoxes.length === 0) {
+        return slot.tapMotions[0].anim; // 无 bounding box 模型：整模型可点
+      }
+      return '';
+    }
+    var i;
+    var j;
+    for (i = 0; i < slot.tapMotions.length; i++) {
+      if (slot.tapMotions[i].area === bbox.name) {
+        return slot.tapMotions[i].anim;
+      }
+    }
+    // 槽位名匹配：找承载该 attachment 的 slot
+    var skelSlots = slot.skeleton.slots || [];
+    for (i = 0; i < skelSlots.length; i++) {
+      if (skelSlots[i].getAttachment() === bbox && skelSlots[i].data && skelSlots[i].data.name) {
+        var slotName = skelSlots[i].data.name;
+        for (j = 0; j < slot.tapMotions.length; j++) {
+          if (slot.tapMotions[j].area === slotName) {
+            return slot.tapMotions[j].anim;
+          }
+        }
+        break;
+      }
+    }
+    return '';
+  }
+
+  /**
+   * 播放点击反应动画：loop=false 播完一次经 restoreAfterTap 恢复；
+   * 不改 currentAnimationName、不回报（chip 保持底层动画）。返回是否成功。
+   */
+  function playTapMotion(slotIdx, animName) {
+    var slot = slots[slotIdx];
+    if (!slot.state || !slot.skeletonData) {
+      return false;
+    }
+    var found = false;
+    var anims = slot.skeletonData.animations || [];
+    for (var i = 0; i < anims.length; i++) {
+      if (anims[i].name === animName) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      return false;
+    }
+    slot.tapReturnName = slot.playlist.enabled ? '' : slot.currentAnimationName;
+    slot.tapAnimName = animName;
+    try {
+      slot.state.setAnimation(0, animName, false);
+    } catch (e) {
+      slot.tapAnimName = '';
+      slot.tapReturnName = '';
+      notifyError(slotIdx, 'ANIMATION_ERROR', (e && e.message) || e);
+      return false;
+    }
+    renderFrame(0);
+    return true;
   }
 
   // ==================== 渲染循环 ====================
@@ -897,13 +1154,27 @@
   }
 
   function handleTap() {
-    if (!tapSwitch) {
-      return;
-    }
     var slot = slots[gestureSlot];
     if (!slot.skeletonData || slot.status !== 'loaded' || !slot.visible) {
       return;
     }
+    // 1. config.json tap_motions：命中 bounding box → 播放指定反应动画（播完自动恢复）
+    if (slot.tapMotions.length > 0) {
+      var tapPoint = gesture.startTouches.length > 0 ? gesture.startTouches[0] : { x: 0, y: 0 };
+      var tapAnim = findTapMotionAt(gestureSlot, tapPoint);
+      if (tapAnim && playTapMotion(gestureSlot, tapAnim)) {
+        return;
+      }
+    }
+    if (!tapSwitch) {
+      return;
+    }
+    // 2. 轮播列表启用：点按 = 播下一个轮播项
+    if (slot.playlist.enabled && slot.playlist.names.length > 0 && slot.state) {
+      playPlaylistItem(gestureSlot, slot.playlist.index + 1, true);
+      return;
+    }
+    // 3. 旧逻辑：全动画轮换
     var anims = slot.skeletonData.animations || [];
     if (!anims.length) {
       return;
@@ -1073,7 +1344,10 @@
     setGestureSlot: cmdSetGestureSlot,
     setSlotVisible: cmdSetSlotVisible,
         setMirror: cmdSetMirror,
-        setAlpha: cmdSetAlpha
+        setAlpha: cmdSetAlpha,
+        setSpeed: cmdSetSpeed,
+        setMix: cmdSetMix,
+        setPlaylist: cmdSetPlaylist
   };
 
   window.SpineHost = {

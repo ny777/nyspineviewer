@@ -6,23 +6,14 @@
  */
 import { SpineModelItem } from '../model/SpineModelItem';
 import { getTheme, ThemeColors } from '../core/Theme';
-
-/** 页面渲染用分组视图（'' = 未分组，置顶）。 */
-export class ModelGroup {
-  name: string;
-  models: Array<SpineModelItem>;
-
-  constructor(name: string, models: Array<SpineModelItem>) {
-    this.name = name;
-    this.models = models;
-  }
-}
+import { LibRow, LibraryListDataSource, ModelGroup } from './LibraryDataSource';
 
 @Component
 export struct ModelLibraryPage {
-  @Link models: Array<SpineModelItem>;
-  @Prop mainModelId: string = '';
-  @Prop subModelId: string = '';
+  /** 列表渲染输入全部经 @Watch 汇入 onLibraryInputChanged → dataSource.rebuild（LazyForEach 不观察状态）。 */
+  @Link @Watch('onLibraryInputChanged') models: Array<SpineModelItem>;
+  @Prop @Watch('onLibraryInputChanged') mainModelId: string = '';
+  @Prop @Watch('onLibraryInputChanged') subModelId: string = '';
   @Prop importing: boolean = false;
   /** 批量导入进度（"done/total"，空串表示无进度）。 */
   @Prop importProgress: string = '';
@@ -57,26 +48,52 @@ export struct ModelLibraryPage {
   onSortChange: (mode: string) => void = (mode: string) => {
   };
   /** 库内排序模式：'default' | 'name' | 'time'。 */
-  @Prop sortMode: string = 'default';
+  @Prop @Watch('onLibraryInputChanged') sortMode: string = 'default';
   /** 回收站内模型数（标题行徽标）。 */
   @Prop trashCount: number = 0;
-  @State collapsedGroups: Array<string> = [];
+  @State @Watch('onLibraryInputChanged') collapsedGroups: Array<string> = [];
   /** 批量管理模式（勾选删除）。 */
-  @State batchMode: boolean = false;
+  @State @Watch('onLibraryInputChanged') batchMode: boolean = false;
   /** 批量模式已勾选的模型 id。 */
-  @State selectedIds: Array<string> = [];
+  @State @Watch('onLibraryInputChanged') selectedIds: Array<string> = [];
   /** 库内搜索关键字（名称/分组/版本/动画 substring 过滤）。 */
-  @State searchQuery: string = '';
+  @State @Watch('onLibraryInputChanged') searchQuery: string = '';
   /** 缺图横幅本次会话是否已忽略。 */
   @State thumbBannerDismissed: boolean = false;
   @StorageProp('themeDark') themeDark: boolean = true;
+
+  /** LazyForEach 扁平行数据源（分组头 + 一行两卡），rebuild 后按 key 差分复用未变行。 */
+  private dataSource: LibraryListDataSource = new LibraryListDataSource();
+  /** 过滤结果缓存（键：models 引用 + 搜索词 + 排序模式）。 */
+  private filterCacheSource: Array<SpineModelItem> | null = null;
+  private filterCacheQuery: string = '';
+  private filterCacheSort: string = '';
+  private filterCacheResult: Array<SpineModelItem> = [];
+  /** 分组视图缓存（键：过滤结果数组引用）。 */
+  private groupsCacheSource: Array<SpineModelItem> | null = null;
+  private groupsCacheResult: Array<ModelGroup> = [];
+
+  aboutToAppear(): void {
+    this.onLibraryInputChanged();
+  }
+
+  /** 全部列表输入（模型/排序/搜索/折叠/勾选/主副/批量）变化的统一重建入口。 */
+  private onLibraryInputChanged(): void {
+    this.dataSource.rebuild(this.buildGroups(), this.collapsedGroups,
+      this.searchQuery.trim().length > 0, this.selectedIds,
+      this.mainModelId, this.subModelId, this.batchMode);
+  }
 
   private theme(): ThemeColors {
     return getTheme(this.themeDark);
   }
 
-  /** 搜索过滤：名称/分组/版本/动画任一 substring 命中（大小写不敏感）；再按排序模式排序（拷贝后排序，不就地改 models）。 */
+  /** 搜索过滤：名称/分组/版本/动画任一 substring 命中（大小写不敏感）；再按排序模式排序（拷贝后排序，不就地改 models）。结果缓存：同一 models 引用 + 搜索词 + 排序模式直接复用。 */
   private filteredModels(): Array<SpineModelItem> {
+    if (this.models === this.filterCacheSource && this.searchQuery === this.filterCacheQuery
+      && this.sortMode === this.filterCacheSort) {
+      return this.filterCacheResult;
+    }
     const q = this.searchQuery.trim().toLowerCase();
     let source = this.models;
     if (q.length > 0) {
@@ -96,19 +113,22 @@ export struct ModelLibraryPage {
     } else if (this.sortMode === 'time') {
       sorted.sort((a: SpineModelItem, b: SpineModelItem): number => b.createdAt - a.createdAt);
     }
+    this.filterCacheSource = this.models;
+    this.filterCacheQuery = this.searchQuery;
+    this.filterCacheSort = this.sortMode;
+    this.filterCacheResult = sorted;
     return sorted;
   }
 
-  /** 分组成员签名（id+name+hasThumb 按显示顺序）：重命名/排序/缩略图落盘/成员变动都会改变签名，用于强制重建分组项。 */
-  private groupSignature(group: ModelGroup): string {
-    return group.models.map((m: SpineModelItem): string => `${m.id}:${m.name}:${m.hasThumb ? 1 : 0}`).join(';');
-  }
-
-  /** 由模型列表派生分组视图：未分组置顶，其余按首现顺序。 */
+  /** 由模型列表派生分组视图：未分组置顶，其余按首现顺序（结果按过滤结果引用缓存）。 */
   private buildGroups(): Array<ModelGroup> {
+    const src = this.filteredModels();
+    if (src === this.groupsCacheSource) {
+      return this.groupsCacheResult;
+    }
     let ungrouped: ModelGroup | null = null;
     const named = new Map<string, ModelGroup>();
-    for (const m of this.filteredModels()) {
+    for (const m of src) {
       if (m.group.length === 0) {
         if (ungrouped === null) {
           ungrouped = new ModelGroup('', new Array<SpineModelItem>());
@@ -130,6 +150,8 @@ export struct ModelLibraryPage {
     named.forEach((bucket: ModelGroup) => {
       result.push(bucket);
     });
+    this.groupsCacheSource = src;
+    this.groupsCacheResult = result;
     return result;
   }
 
@@ -416,22 +438,21 @@ export struct ModelLibraryPage {
         .width('100%')
       } else {
         List({ space: 10 }) {
-          ForEach(this.buildGroups(), (group: ModelGroup) => {
+          LazyForEach(this.dataSource, (row: LibRow) => {
             ListItem() {
-              Column({ space: 10 }) {
-                this.GroupHeader(group)
-                if (!this.isCollapsed(group.name) || this.searchQuery.trim().length > 0) {
-                  this.ModelPairGrid(group.models)
-                }
+              if (row.isHeader) {
+                this.GroupHeader(row)
+              } else {
+                this.PairRow(row)
               }
-              .width('100%')
             }
-          }, (group: ModelGroup) => `${group.name}::${group.models.length}::${this.groupSignature(group)}::${this.isCollapsed(group.name) ? 'c' : 'o'}`)
+          }, (row: LibRow) => row.key)
         }
         .layoutWeight(1)
         .width('100%')
         .scrollBar(BarState.Auto)
         .edgeEffect(EdgeEffect.Spring)
+        .cachedCount(3)
       }
     }
     .width('100%')
@@ -624,26 +645,26 @@ export struct ModelLibraryPage {
 
   /** 分组头：折叠箭头 + 名称 + 数量 + 组操作 ⋮ 菜单。 */
   @Builder
-  GroupHeader(group: ModelGroup) {
+  GroupHeader(row: LibRow) {
     Row({ space: 8 }) {
-      SymbolGlyph(this.isCollapsed(group.name) ? $r('sys.symbol.chevron_right') : $r('sys.symbol.chevron_down'))
+      SymbolGlyph(this.isCollapsed(row.headerName) ? $r('sys.symbol.chevron_right') : $r('sys.symbol.chevron_down'))
         .fontSize(12)
         .fontColor([this.theme().textSecondary])
         .width(16)
-      Text(group.name.length === 0 ? $r('app.string.group_ungrouped') : group.name)
+      Text(row.headerName.length === 0 ? $r('app.string.group_ungrouped') : row.headerName)
         .fontSize(13)
         .fontWeight(FontWeight.Medium)
         .fontColor(this.theme().textSecondary)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
-      Text(`${group.models.length}`)
+      Text(`${row.headerCount}`)
         .fontSize(11)
         .fontColor(this.theme().badgeText)
         .backgroundColor(this.theme().badgeBg)
         .padding({ left: 8, right: 8, top: 2, bottom: 2 })
         .borderRadius(8)
-      if (group.name.length > 0) {
+      if (row.headerName.length > 0) {
         SymbolGlyph($r('sys.symbol.more'))
           .fontSize(14)
           .fontColor([this.theme().textSecondary])
@@ -652,19 +673,19 @@ export struct ModelLibraryPage {
             {
               value: $r('app.string.menu_rename_group'),
               action: (): void => {
-                this.onRenameGroup(group.name);
+                this.onRenameGroup(row.headerName);
               }
             },
             {
               value: $r('app.string.menu_dissolve_group'),
               action: (): void => {
-                this.onDissolveGroup(group.name);
+                this.onDissolveGroup(row.headerName);
               }
             },
             {
               value: $r('app.string.menu_delete_group'),
               action: (): void => {
-                this.onDeleteGroup(group.name);
+                this.onDeleteGroup(row.headerName);
               }
             }
           ])
@@ -673,55 +694,30 @@ export struct ModelLibraryPage {
     .width('100%')
     .padding({ left: 4, right: 4, top: 2, bottom: 2 })
     .onClick(() => {
-      this.toggleCollapse(group.name);
+      this.toggleCollapse(row.headerName);
     })
   }
 
-  private chunkPairs(models: Array<SpineModelItem>): Array<Array<SpineModelItem>> {
-    const pairs = new Array<Array<SpineModelItem>>();
-    for (let i = 0; i < models.length; i += 2) {
-      const pair = new Array<SpineModelItem>();
-      pair.push(models[i]);
-      if (i + 1 < models.length) {
-        pair.push(models[i + 1]);
-      }
-      pairs.push(pair);
-    }
-    return pairs;
-  }
-
-  /** 两列卡片：每行两个等宽卡片，奇数行右侧留占位。 */
+  /** 一行两卡：每行两个等宽卡片，奇数行右侧留占位。 */
   @Builder
-  ModelPairGrid(models: Array<SpineModelItem>) {
-    Column({ space: 10 }) {
-      ForEach(this.chunkPairs(models), (pair: Array<SpineModelItem>) => {
-        Row({ space: 10 }) {
-          Column() {
-            this.ModelCard(pair[0])
-          }
+  PairRow(row: LibRow) {
+    Row({ space: 10 }) {
+      Column() {
+        this.ModelCard(row.items[0])
+      }
+      .layoutWeight(1)
+      if (row.items.length > 1) {
+        Column() {
+          this.ModelCard(row.items[1])
+        }
+        .layoutWeight(1)
+      } else {
+        Column()
           .layoutWeight(1)
-          if (pair.length > 1) {
-            Column() {
-              this.ModelCard(pair[1])
-            }
-            .layoutWeight(1)
-          } else {
-            Column()
-              .layoutWeight(1)
-          }
-        }
-        .width('100%')
-        .alignItems(VerticalAlign.Top)
-      }, (pair: Array<SpineModelItem>) => {
-        // key 含 hasThumb/name/成员 id：缩略图落盘、模型重命名、排序/分组变动后强制重建卡片项（ForEach 同 key 不重渲染）
-        let key = `${pair[0].id}::${pair[0].name}::${pair[0].hasThumb ? 1 : 0}::${pair.length}`;
-        if (pair.length > 1) {
-          key += `::${pair[1].id}::${pair[1].name}::${pair[1].hasThumb ? 1 : 0}`;
-        }
-        return key;
-      })
+      }
     }
     .width('100%')
+    .alignItems(VerticalAlign.Top)
   }
 
   /** 卡片缩略图（64x84 圆角 8）：有图显示 file 图，无图占位；批量勾选叠加左上角。 */
@@ -736,6 +732,7 @@ export struct ModelLibraryPage {
           .objectFit(ImageFit.Cover)
           .draggable(false)
           .interpolation(ImageInterpolation.Medium)
+          .autoResize(true)
       } else {
         Column() {
           SymbolGlyph($r('sys.symbol.person'))

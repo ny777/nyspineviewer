@@ -18,10 +18,16 @@ export struct SettingsPage {
   @Prop @Watch('onRotationIntervalPropChange') rotationInterval: number = 60;
   @Prop @Watch('onAlphaMainPropChange') alphaMain: number = 100;
   @Prop @Watch('onAlphaSubPropChange') alphaSub: number = 100;
+  @Prop @Watch('onSpeedMainPropChange') speedMain: number = 1;
+  @Prop @Watch('onSpeedSubPropChange') speedSub: number = 1;
+  @Prop @Watch('onMixPropChange') animationMix: number = 0.2;
   @State fpsPreview: number = 60;
   @State rotationPreview: number = 60;
   @State alphaMainPreview: number = 100;
   @State alphaSubPreview: number = 100;
+  @State speedMainPreview: number = 1;
+  @State speedSubPreview: number = 1;
+  @State mixPreview: number = 0.2;
   onPmaMainChange: (pma: boolean) => void = (pma: boolean) => {
   };
   onPmaSubChange: (pma: boolean) => void = (pma: boolean) => {
@@ -41,6 +47,12 @@ export struct SettingsPage {
   onAlphaMainChange: (percent: number) => void = (percent: number) => {
   };
   onAlphaSubChange: (percent: number) => void = (percent: number) => {
+  };
+  onSpeedMainChange: (speed: number) => void = (speed: number) => {
+  };
+  onSpeedSubChange: (speed: number) => void = (speed: number) => {
+  };
+  onMixChange: (mix: number) => void = (mix: number) => {
   };
   /** 回收站保留策略（天数，0 = 永久保留）。 */
   @Prop trashRetentionDays: number = 0;
@@ -68,6 +80,9 @@ export struct SettingsPage {
     this.rotationPreview = this.rotationInterval;
     this.alphaMainPreview = this.alphaMain;
     this.alphaSubPreview = this.alphaSub;
+    this.speedMainPreview = this.speedMain;
+    this.speedSubPreview = this.speedSub;
+    this.mixPreview = this.animationMix;
   }
 
   private onFpsPropChange(): void {
@@ -84,6 +99,28 @@ export struct SettingsPage {
 
   private onAlphaSubPropChange(): void {
     this.alphaSubPreview = this.alphaSub;
+  }
+
+  private onSpeedMainPropChange(): void {
+    this.speedMainPreview = this.speedMain;
+  }
+
+  private onSpeedSubPropChange(): void {
+    this.speedSubPreview = this.speedSub;
+  }
+
+  private onMixPropChange(): void {
+    this.mixPreview = this.animationMix;
+  }
+
+  /** 速度预览格式化（两位小数 + ×）。 */
+  private formatSpeed(speed: number): string {
+    return `${speed.toFixed(2)}×`;
+  }
+
+  /** 过渡秒数预览格式化（两位小数 + 秒）。 */
+  private formatMixSeconds(mix: number): string {
+    return `${mix.toFixed(2)} 秒`;
   }
 
   /** 保留策略显示文案（0 = 永久保留）。 */
@@ -376,6 +413,87 @@ export struct SettingsPage {
             this.fpsPreview = Math.round(value);
             if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
               this.onFpsChange(Math.round(value));
+            }
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 10, bottom: 14 })
+      .alignItems(VerticalAlign.Center)
+
+      Divider()
+        .color(this.theme().divider)
+        .width('100%')
+
+      // 模型1播放速度：0.25×-2×（两位小数），松手/点击提交
+      Row({ space: 10 }) {
+        Text($r('app.string.settings_speed_main'))
+          .fontSize(15)
+          .fontColor(this.theme().text)
+        Text(this.formatSpeed(this.speedMainPreview))
+          .fontSize(14)
+          .fontColor(this.theme().textSecondary)
+          .constraintSize({ maxWidth: 64 })
+          .textAlign(TextAlign.End)
+        Slider({ value: this.speedMain, min: 0.25, max: 2, step: 0.05, style: SliderStyle.OutSet })
+          .layoutWeight(1)
+          .onChange((value: number, mode: SliderChangeMode) => {
+            this.speedMainPreview = Math.round(value * 100) / 100;
+            if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+              this.onSpeedMainChange(Math.round(value * 100) / 100);
+            }
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 10, bottom: 14 })
+      .alignItems(VerticalAlign.Center)
+
+      Divider()
+        .color(this.theme().divider)
+        .width('100%')
+
+      // 模型2播放速度：同上
+      Row({ space: 10 }) {
+        Text($r('app.string.settings_speed_sub'))
+          .fontSize(15)
+          .fontColor(this.theme().text)
+        Text(this.formatSpeed(this.speedSubPreview))
+          .fontSize(14)
+          .fontColor(this.theme().textSecondary)
+          .constraintSize({ maxWidth: 64 })
+          .textAlign(TextAlign.End)
+        Slider({ value: this.speedSub, min: 0.25, max: 2, step: 0.05, style: SliderStyle.OutSet })
+          .layoutWeight(1)
+          .onChange((value: number, mode: SliderChangeMode) => {
+            this.speedSubPreview = Math.round(value * 100) / 100;
+            if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+              this.onSpeedSubChange(Math.round(value * 100) / 100);
+            }
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 10, bottom: 14 })
+      .alignItems(VerticalAlign.Center)
+
+      Divider()
+        .color(this.theme().divider)
+        .width('100%')
+
+      // 动画过渡混合秒数：0（硬切）-0.5（柔和），默认 0.2
+      Row({ space: 10 }) {
+        Text($r('app.string.settings_mix_label'))
+          .fontSize(15)
+          .fontColor(this.theme().text)
+        Text(this.formatMixSeconds(this.mixPreview))
+          .fontSize(14)
+          .fontColor(this.theme().textSecondary)
+          .constraintSize({ maxWidth: 76 })
+          .textAlign(TextAlign.End)
+        Slider({ value: this.animationMix, min: 0, max: 0.5, step: 0.05, style: SliderStyle.OutSet })
+          .layoutWeight(1)
+          .onChange((value: number, mode: SliderChangeMode) => {
+            this.mixPreview = Math.round(value * 100) / 100;
+            if (mode === SliderChangeMode.End || mode === SliderChangeMode.Click) {
+              this.onMixChange(Math.round(value * 100) / 100);
             }
           })
       }

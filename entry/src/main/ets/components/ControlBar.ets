@@ -19,6 +19,8 @@ export struct ControlBar {
   @Prop selectedSkins: Array<string> = [];
   @Prop slot0Visible: boolean = true;
   @Prop slot1Visible: boolean = true;
+  @Prop playlist: Array<string> = [];
+  @Prop playlistEnabled: boolean = false;
   @StorageProp('themeDark') themeDark: boolean = true;
 
   onSlotChange: (slot: number) => void = (slot: number) => {
@@ -30,6 +32,10 @@ export struct ControlBar {
   onToggleMirror: () => void = () => {
   };
   onAnimationPick: (name: string) => void = (name: string) => {
+  };
+  onPlaylistModeToggle: () => void = () => {
+  };
+  onPlaylistItemToggle: (name: string) => void = (name: string) => {
   };
   onSkinToggle: (name: string) => void = (name: string) => {
   };
@@ -99,7 +105,7 @@ export struct ControlBar {
         Blank()
           .layoutWeight(1)
 
-        // 动画 chip：点按弹菜单（行1 靠右）
+        // 动画 chip：点按弹菜单（行1 靠右）；轮播启用时高亮指示
         Text(this.currentAnimation.length > 0 ? this.currentAnimation : $r('app.string.no_animation'))
           .fontSize(12)
           .maxLines(1)
@@ -107,8 +113,8 @@ export struct ControlBar {
           .constraintSize({ maxWidth: 90 })
           .padding({ left: 10, right: 10, top: 5, bottom: 5 })
           .borderRadius(13)
-          .backgroundColor(this.theme().chip)
-          .fontColor(this.theme().text)
+          .backgroundColor(this.playlistEnabled ? this.theme().cardSelected : this.theme().chip)
+          .fontColor(this.playlistEnabled ? Color.White : this.theme().text)
           .bindMenu(this.AnimationMenuBuilder)
       }
       .width('100%')
@@ -209,15 +215,108 @@ export struct ControlBar {
     .backgroundColor(this.theme().bottomBarBg)
   }
 
+  // 动画菜单：自定义弹层（不用 Menu 组件——其子节点仅限 MenuItem，
+  // 无法实现轮播多选时"点击不关菜单"）。FAQ faqs-arkui-1403：
+  // 弹层内容点击默认冒泡收起菜单；HitTestMode.Block 可阻断，实现连续勾选。
+  // 注意：bindMenu 弹层内 percent 宽度/layoutWeight 解析异常（实测渲染塌缩），
+  // 全部使用固定 vp 宽度。
   @Builder
   AnimationMenuBuilder() {
-    Menu() {
-      ForEach(this.animations, (name: string) => {
-        MenuItem({ content: name })
-          .onClick(() => {
-            this.onAnimationPick(name);
-          })
-      }, (name: string) => name)
+    Column() {
+      // 轮播模式切换行：开启后动画项变多选（✓ 连续勾选），再点恢复单选播放
+      Row() {
+        Text($r('app.string.playlist_toggle'))
+          .fontSize(15)
+          .fontColor(this.playlistEnabled ? this.theme().accent : this.theme().textSecondary)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .constraintSize({ maxWidth: 150 })
+        Blank()
+        Text(this.playlistEnabled ? '✓' : '')
+          .fontSize(15)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(this.theme().accent)
+          .width(16)
+          .textAlign(TextAlign.Center)
+      }
+      .width(228)
+      .height(44)
+      .padding({ left: 14, right: 14 })
+      .borderRadius(10)
+      .alignItems(VerticalAlign.Center)
+      .onClick(() => {
+        this.onPlaylistModeToggle();
+      })
+
+      if (this.animations.length > 0) {
+        Divider()
+          .color(this.theme().divider)
+          .width(216)
+          .margin({ top: 2, bottom: 2 })
+
+        Scroll() {
+          Column() {
+            if (!this.playlistEnabled) {
+              // 单选模式：点击即播放；不设 Block，点击冒泡由弹层收起菜单
+              ForEach(this.animations, (name: string) => {
+                Row() {
+                  Text(name)
+                    .fontSize(15)
+                    .fontColor(this.currentAnimation === name ? this.theme().accent : this.theme().text)
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .constraintSize({ maxWidth: 180 })
+                }
+                .width(228)
+                .height(44)
+                .padding({ left: 14, right: 14 })
+                .borderRadius(10)
+                .alignItems(VerticalAlign.Center)
+                .onClick(() => {
+                  this.onAnimationPick(name);
+                })
+              }, (name: string) => `${this.currentAnimation === name ? '1' : '0'}:${name}`)
+            } else {
+              // 轮播多选模式：Block 阻断弹层收起，支持连续勾选；点击空白处收起
+              ForEach(this.animations, (name: string) => {
+                Row() {
+                  Text(this.playlist.includes(name) ? '✓' : '')
+                    .fontSize(15)
+                    .fontWeight(FontWeight.Bold)
+                    .fontColor(this.theme().accent)
+                    .width(16)
+                    .textAlign(TextAlign.Center)
+                  Text(name)
+                    .fontSize(15)
+                    .margin({ left: 8 })
+                    .fontColor(this.playlist.includes(name) ? this.theme().accent : this.theme().text)
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .constraintSize({ maxWidth: 170 })
+                }
+                .width(228)
+                .height(44)
+                .padding({ left: 14, right: 14 })
+                .borderRadius(10)
+                .alignItems(VerticalAlign.Center)
+                .backgroundColor(this.playlist.includes(name) ? this.theme().cardActive : Color.Transparent)
+                .hitTestBehavior(HitTestMode.Block)
+                .onClick(() => {
+                  this.onPlaylistItemToggle(name);
+                })
+              }, (name: string) => `${this.playlist.includes(name) ? '1' : '0'}:${name}`)
+            }
+          }
+        }
+        .constraintSize({ maxHeight: 320 })
+        .scrollBar(BarState.Off)
+      }
     }
+    .width(240)
+    .padding(6)
+    .backgroundColor(this.theme().dialogBg)
+    .borderRadius(16)
+    .border({ width: 1, color: this.theme().border })
+    .shadow({ radius: 24, color: this.theme().scrim, offsetY: 6 })
   }
 }

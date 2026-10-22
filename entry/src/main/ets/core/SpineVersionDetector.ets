@@ -46,6 +46,18 @@ export function detectSpineVersion(fileFullPath: string): SpineDetectResult {
   return { version: detectFromBinary(fileFullPath), format: format };
 }
 
+/**
+ * 同 detectSpineVersion，但 JSON 分支复用调用方已读出的文本（避免重复读盘/解析）；
+ * format 为 SKEL 时 jsonText 忽略。
+ */
+export function detectSpineVersionFromText(fileFullPath: string, jsonText: string): SpineDetectResult {
+  const format = detectFormat(fileFullPath);
+  if (format === 'JSON') {
+    return { version: detectFromJsonText(jsonText), format: format };
+  }
+  return { version: detectFromBinary(fileFullPath), format: format };
+}
+
 /** 按扩展名判断格式：JSON / SKEL。 */
 export function detectFormat(fileFullPath: string): string {
   const normalized = fileFullPath.toLowerCase();
@@ -58,8 +70,17 @@ export function detectFormat(fileFullPath: string): string {
 /** 解析 JSON 骨骼描述中的 skeleton.spine 版本字段。 */
 function detectFromJson(fileFullPath: string): SpineVersion {
   try {
-    const text = fileIo.readTextSync(fileFullPath);
-    const parsed: object = JSON.parse(text);
+    return detectFromJsonText(fileIo.readTextSync(fileFullPath));
+  } catch (err) {
+    console.error(`${TAG} detectFromJson failed: ${JSON.stringify(err)}`);
+    return SpineVersion.UNKNOWN;
+  }
+}
+
+/** 同 detectFromJson，但直接消费已读出的 JSON 文本。 */
+function detectFromJsonText(jsonText: string): SpineVersion {
+  try {
+    const parsed: object = JSON.parse(jsonText);
     const raw = parsed as SkeletonJsonRaw;
     if (raw.skeleton !== undefined && raw.skeleton !== null &&
       typeof raw.skeleton.spine === 'string' && raw.skeleton.spine.length > 0) {
@@ -70,7 +91,7 @@ function detectFromJson(fileFullPath: string): SpineVersion {
     }
     return SpineVersion.UNKNOWN;
   } catch (err) {
-    console.error(`${TAG} detectFromJson failed: ${JSON.stringify(err)}`);
+    console.error(`${TAG} detectFromJsonText failed: ${JSON.stringify(err)}`);
     return SpineVersion.UNKNOWN;
   }
 }

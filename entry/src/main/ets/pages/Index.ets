@@ -10,19 +10,20 @@ import { fileIo } from '@kit.CoreFileKit';
 import { Context } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { PrefsManager, PrefsKeys, SlotPrefs } from '../core/PrefsManager';
+import { PrefsManager, PrefsKeys, SlotPrefs, PlaylistPrefs } from '../core/PrefsManager';
 import { getTheme, ThemeColors } from '../core/Theme';
 import {
   BridgeCmdNames,
   BridgeCommand,
+  TapMotionEntry,
   buildRunScript,
   parseModelLoadedEvent,
   parseBridgeErrorEvent,
-  parseCaptureChunkEvent,
-  parseCaptureFrameEvent,
   parseTransformChangedEvent,
   parseAnimationChangedEvent
 } from '../core/BridgeProtocol';
+import { intColorToHex, hexToIntColor, normalizeRgbHex, clampInt, clampFloat2 } from '../core/ColorUtils';
+import { SlotUiState } from '../core/SlotUiState';
 import { SpineModelLibrary, BatchImportResult, TrashEntry } from '../model/SpineModelLibrary';
 import { SpineModelItem } from '../model/SpineModelItem';
 import { sanitizeAtlas } from '../model/AtlasSanitizer';
@@ -38,20 +39,11 @@ import { RenameModelDialog } from '../components/RenameModelDialog';
 import { TrashDialog } from '../components/TrashDialog';
 import { FrameExporter } from '../capture/FrameExporter';
 import { ThumbStore } from '../capture/ThumbStore';
-import { WidgetFormsStore, WidgetSnapshotStore, WidgetUpdater } from '../widget/WidgetStore';
+import { CaptureCoordinator, CaptureDeps, CAPTURE_PURPOSE_GALLERY, CAPTURE_PURPOSE_WIDGET, CAPTURE_PURPOSE_WIDGET_MANUAL, CAPTURE_PURPOSE_THUMB } from '../capture/CaptureCoordinator';
+import { ThumbPipeline, ThumbDeps } from '../capture/ThumbPipeline';
+import { WidgetCoordinator, WidgetDeps } from '../widget/WidgetCoordinator';
+import { TrashCoordinator, TrashDeps } from '../model/TrashCoordinator';
 
-const CAPTURE_TIMEOUT_MS = 15000;
-/** 模型加载后延时截帧更新卡片（等首帧稳定）。 */
-const WIDGET_CAPTURE_DELAY_MS = 800;
-/** 截帧用途：保存到图库 / 自动更新卡片 / 手动更新卡片 / 缩略图管线。 */
-const CAPTURE_PURPOSE_GALLERY = 'gallery';
-const CAPTURE_PURPOSE_WIDGET = 'widget';
-const CAPTURE_PURPOSE_WIDGET_MANUAL = 'widget-manual';
-const CAPTURE_PURPOSE_THUMB = 'thumb';
-/** 缩略图管线：单模型加载等待上限（MODEL_READY 未回传则跳过）。 */
-const THUMB_MODEL_TIMEOUT_MS = 4000;
-/** 缩略图管线：模型就绪后的稳帧等待。 */
-const THUMB_SETTLE_MS = 400;
 const LOG_DOMAIN = 0x0031;
 const TAG = 'SpineIndex';
 /** 收藏颜色默认列表（ARGB 十六进制，HdsColorPicker 收藏夹）。 */
@@ -62,27 +54,6 @@ const DEFAULT_BG_FAVORITES: Array<string> = [
 ];
 
 /** 单槽位 UI 状态（不可变更新：修改走 clone + 数组重赋值）。 */
-class SlotUiState {
-  animations: Array<string> = [];
-  skins: Array<string> = [];
-  currentAnimation: string = '';
-  selectedSkins: Array<string> = [];
-  pma: boolean = true;
-  mirrored: boolean = false;
-  alpha: number = 100;
-
-  clone(): SlotUiState {
-    const copy = new SlotUiState();
-    copy.animations = this.animations.slice();
-    copy.skins = this.skins.slice();
-    copy.currentAnimation = this.currentAnimation;
-    copy.selectedSkins = this.selectedSkins.slice();
-    copy.pma = this.pma;
-    copy.mirrored = this.mirrored;
-    copy.alpha = this.alpha;
-    return copy;
-  }
-}
 
 @Entry
 @Component
@@ -103,13 +74,108 @@ struct Index {
   private renameGroupController: CustomDialogController | null = null;
   private renameModelController: CustomDialogController | null = null;
 
-  // 截帧分块缓存
-  private captureChunks: Array<string> = [];
-  private captureTotal: number = 0;
-  private captureTimerId: number = -1;
-  /** 本次截帧用途（见 CAPTURE_PURPOSE_*）。 */
-  private capturePurpose: string = CAPTURE_PURPOSE_GALLERY;
-  private widgetCaptureTimerId: number = -1;
+  // ==================== 协调器（自本组件抽出的独立子系统） ====================
+  /** 截帧状态机（capturing @State 由本组件持有，经回调同步）。 */
+  private capture: CaptureCoordinator = new CaptureCoordinator({
+    sendCommand: (command: BridgeCommand): void => {
+      this.sendCommand(command);
+    },
+    isWebReady: (): boolean => this.webReady,
+    setCapturing: (capturing: boolean): void => {
+      this.capturing = capturing;
+    },
+    onCaptureComplete: (base64: string, purpose: string): void => {
+      this.handleCaptureComplete(base64, purpose);
+    },
+    onCaptureFail: (purpose: string): void => {
+      this.handleCaptureFail(purpose);
+    }
+  });
+  /** 缩略图补全管线（串行加载 → 稳帧 → 截帧落盘 → 恢复主模型）。 */
+  private thumbPipeline: ThumbPipeline = new ThumbPipeline({
+    getContext: (): Context => getContext(this),
+    library: (): SpineModelLibrary | null => this.library,
+    sendCommand: (command: BridgeCommand): void => {
+      this.sendCommand(command);
+    },
+    startCapture: (purpose: string): void => {
+      this.capture.start(purpose);
+    },
+    isWebReady: (): boolean => this.webReady,
+    isCapturing: (): boolean => this.capturing,
+    setModelLoading: (loading: boolean): void => {
+      this.modelLoading = loading;
+    },
+    isModelLoading: (): boolean => this.modelLoading,
+    setGenerating: (generating: boolean): void => {
+      this.thumbGenerating = generating;
+    },
+    isGenerating: (): boolean => this.thumbGenerating,
+    setProgress: (current: number, total: number): void => {
+      this.thumbGenCurrent = current;
+      this.thumbGenTotal = total;
+    },
+    getMainModelId: (): string => this.mainModelId,
+    getSlotPma: (slot: number): boolean => this.slotUi[slot].pma,
+    isMainSlotHidden: (): boolean => !this.slotVisible[0],
+    onThumbSaved: (modelId: string): void => {
+      this.markThumbGenerated(modelId);
+    },
+    restoreMainSlot: (mainWasHidden: boolean): void => {
+      this.loadSlotModel(0);
+      if (mainWasHidden) {
+        this.slotVisible[0] = false;
+        this.slotVisible = this.slotVisible.slice();
+        this.sendCommand({ cmd: BridgeCmdNames.SET_SLOT_VISIBLE, slot: 0, visible: false });
+      }
+    },
+    showResult: (okCount: number, total: number): void => {
+      if (okCount === total) {
+        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.thumb_gen_done') });
+      } else {
+        this.getUIContext().getPromptAction().showToast({
+          message: $r('app.string.thumb_gen_partial', okCount, total - okCount),
+          duration: 3000
+        });
+      }
+    }
+  });
+  /** 桌面卡片快照与刷新。 */
+  private widget: WidgetCoordinator = new WidgetCoordinator({
+    getContext: (): Context => getContext(this),
+    isAutoUpdateEnabled: (): boolean => this.widgetAutoUpdate,
+    isThumbGenerating: (): boolean => this.thumbGenerating,
+    isCapturing: (): boolean => this.capturing,
+    isWebReady: (): boolean => this.webReady,
+    getMainModelId: (): string => this.mainModelId,
+    getMainModelName: (): string => this.currentMainModelName(),
+    setCapturing: (capturing: boolean): void => {
+      this.capturing = capturing;
+    },
+    markThumbGenerated: (modelId: string): void => {
+      this.markThumbGenerated(modelId);
+    },
+    startCapture: (purpose: string): void => {
+      this.capture.start(purpose);
+    },
+    showToast: (message: ResourceStr): void => {
+      this.getUIContext().getPromptAction().showToast({ message: message });
+    }
+  });
+  /** 回收站动作（弹窗与列表状态仍在本组件）。 */
+  private trash: TrashCoordinator = new TrashCoordinator({
+    getContext: (): Context => getContext(this),
+    library: (): SpineModelLibrary | null => this.library,
+    showToast: (message: ResourceStr): void => {
+      this.getUIContext().getPromptAction().showToast({ message: message });
+    },
+    reloadModels: (): void => {
+      this.reloadModels();
+    },
+    refreshTrashEntries: (): void => {
+      this.refreshTrashEntries();
+    }
+  });
 
   @State models: Array<SpineModelItem> = [];
   @State importing: boolean = false;
@@ -124,6 +190,8 @@ struct Index {
   private pausedByHide: boolean = false;
   @State fps: number = 60;
   @State tapSwitch: boolean = true;
+  /** 全局动画过渡混合秒数（0-0.5，默认 0.2）。 */
+  @State animationMix: number = 0.2;
   @State widgetAutoUpdate: boolean = false;
   /** 播放页屏幕常亮（默认开，设置页可关）。 */
   @State keepScreenOn: boolean = true;
@@ -146,10 +214,6 @@ struct Index {
   /** 缩略图管线进度（横幅显示用）。 */
   @State thumbGenCurrent: number = 0;
   @State thumbGenTotal: number = 0;
-  /** 当前截帧所属缩略图模型 id（purpose 为 thumb 时有效）。 */
-  private pendingThumbModelId: string = '';
-  /** 缩略图截帧结果桥（Promise resolve，管线串行等待）。 */
-  private thumbCaptureResolve: ((ok: boolean) => void) | null = null;
   /** 主模型加载遮罩（LOAD_MODEL 发出 → onModelLoaded/onError）。 */
   @State modelLoading: boolean = false;
   @State mainModelId: string = '';
@@ -166,13 +230,13 @@ struct Index {
     builder: TrashDialog({
       entries: this.trashEntries,
       onRestore: (modelId: string): void => {
-        this.restoreTrashedModel(modelId);
+        this.trash.restore(modelId);
       },
       onPurge: (modelId: string): void => {
-        this.purgeTrashedModel(modelId);
+        this.trash.purge(modelId);
       },
       onEmpty: (): void => {
-        this.emptyTrashAction();
+        this.trash.empty();
       }
     }),
     autoCancel: true
@@ -203,10 +267,10 @@ struct Index {
       this.handleBridgeError(json);
     };
     this.bridge.captureChunkHandler = (json: string): void => {
-      this.handleCaptureChunk(json);
+      this.capture.handleChunk(json);
     };
     this.bridge.captureDoneHandler = (json: string): void => {
-      this.handleCaptureDone(json);
+      this.capture.handleDone(json);
     };
     this.bridge.transformChangedHandler = (json: string): void => {
       this.handleTransformChanged(json);
@@ -228,13 +292,14 @@ struct Index {
     this.librarySort = this.normalizeSortMode(prefs.getString(PrefsKeys.LIBRARY_SORT, 'default'));
     this.trashRetentionDays = prefs.getNumber(PrefsKeys.TRASH_RETENTION_DAYS, 0);
     this.refreshTrashEntries();
-    this.purgeExpiredTrashAtStartup(prefs.getNumber(PrefsKeys.TRASH_RETENTION_DAYS, 0));
+    this.trash.purgeExpired(this.trashRetentionDays);
     this.mainModelId = prefs.getString(PrefsKeys.ACTIVE_MODEL_ID, '');
     this.subModelId = prefs.getString(PrefsKeys.MODEL2_ID, '');
     this.selectedSlot = prefs.getNumber(PrefsKeys.SELECTED_SLOT, 0) === 1 ? 1 : 0;
     this.playing = true;
     this.fps = clampInt(prefs.getNumber(PrefsKeys.TARGET_FPS, 60), 15, 120);
     this.tapSwitch = prefs.getBool(PrefsKeys.TAP_SWITCH_ANIMATION, true);
+    this.animationMix = clampFloat2(prefs.getNumber(PrefsKeys.ANIMATION_MIX, 0.2), 0, 0.5);
     this.widgetAutoUpdate = prefs.getBool(PrefsKeys.WIDGET_AUTO_UPDATE, false);
     this.keepScreenOn = prefs.getBool(PrefsKeys.KEEP_SCREEN_ON, true);
     this.applyKeepScreenOn();
@@ -251,8 +316,8 @@ struct Index {
 
   aboutToDisappear(): void {
     this.clearRotationTimer();
-    this.clearCaptureTimer();
-    this.clearWidgetTimer();
+    this.capture.dispose();
+    this.widget.dispose();
   }
 
   onPageHide(): void {
@@ -327,6 +392,8 @@ struct Index {
                 slot0Visible: this.slotVisible[0],
                 slot1Visible: this.slotVisible[1],
                 mirrored: this.slotUi[this.selectedSlot].mirrored,
+                playlist: this.slotUi[this.selectedSlot].playlist,
+                playlistEnabled: this.slotUi[this.selectedSlot].playlistEnabled,
                 onSlotChange: (slot: number): void => {
                   this.switchSlot(slot);
                 },
@@ -342,11 +409,17 @@ struct Index {
                 onAnimationPick: (name: string): void => {
                   this.pickAnimation(this.selectedSlot, name, true);
                 },
+                onPlaylistModeToggle: (): void => {
+                  this.togglePlaylistMode();
+                },
+                onPlaylistItemToggle: (name: string): void => {
+                  this.togglePlaylistItem(name);
+                },
                 onSkinToggle: (name: string): void => {
                   this.toggleSkin(name);
                 },
                 onCapture: (): void => {
-                  this.startCapture(CAPTURE_PURPOSE_GALLERY);
+                  this.capture.start(CAPTURE_PURPOSE_GALLERY);
                 },
                 onResetTransform: (): void => {
                   this.resetTransform();
@@ -411,7 +484,7 @@ struct Index {
           thumbGenCurrent: this.thumbGenCurrent,
           thumbGenTotal: this.thumbGenTotal,
           onGenerateThumbs: (ids: Array<string>): void => {
-            this.generateThumbs(ids);
+            this.thumbPipeline.generate(ids);
           },
           onImport: (): void => {
             this.importModels();
@@ -467,6 +540,9 @@ struct Index {
           rotationInterval: this.rotationIntervalSec,
           alphaMain: this.slotUi[0].alpha,
           alphaSub: this.slotUi[1].alpha,
+          speedMain: this.slotUi[0].speed,
+          speedSub: this.slotUi[1].speed,
+          animationMix: this.animationMix,
           trashRetentionDays: this.trashRetentionDays,
           onPmaMainChange: (pma: boolean): void => {
             this.togglePma(0, pma);
@@ -498,13 +574,22 @@ struct Index {
           onAlphaSubChange: (percent: number): void => {
             this.setSlotAlpha(1, percent);
           },
+          onSpeedMainChange: (speed: number): void => {
+            this.setSlotSpeed(0, speed);
+          },
+          onSpeedSubChange: (speed: number): void => {
+            this.setSlotSpeed(1, speed);
+          },
+          onMixChange: (mix: number): void => {
+            this.setAnimationMix(mix);
+          },
           onTrashRetentionChange: (days: number): void => {
             this.trashRetentionDays = days;
             this.prefs?.putNumber(PrefsKeys.TRASH_RETENTION_DAYS, days);
             this.prefs?.flush();
           },
           onUpdateWidgetNow: (): void => {
-            this.updateWidgetNow();
+            this.widget.updateNow();
           },
           onToggleTheme: (dark: boolean): void => {
             this.setThemeDark(dark);
@@ -564,6 +649,7 @@ struct Index {
     hilog.info(LOG_DOMAIN, TAG, 'web ready, main=%{public}s sub=%{public}s', this.mainModelId, this.subModelId);
     this.sendCommand({ cmd: BridgeCmdNames.SET_GESTURE_SLOT, slot: this.selectedSlot });
     this.sendCommand({ cmd: BridgeCmdNames.SET_FPS, fps: this.fps });
+    this.sendCommand({ cmd: BridgeCmdNames.SET_MIX, mix: this.animationMix });
     this.sendCommand({ cmd: BridgeCmdNames.SET_BG_COLOR, color: this.bgColor });
     if (this.bgImageName.length > 0) {
       this.sendCommand({ cmd: BridgeCmdNames.SET_BG_IMAGE, url: `/bg/${this.bgImageName}` });
@@ -646,6 +732,13 @@ struct Index {
     if (slot === 0) {
       this.modelLoading = true;
     }
+    // config.json tap_motions → [{area, anim}]（bounding box 命中区域 → 反应动画）
+    const tapMotions = new Array<TapMotionEntry>();
+    if (config !== null && config.tap_motions.size > 0) {
+      config.tap_motions.forEach((anim: string, area: string): void => {
+        tapMotions.push({ area: area, anim: anim });
+      });
+    }
     this.sendCommand({
       cmd: BridgeCmdNames.LOAD_MODEL,
       slot: slot,
@@ -655,7 +748,8 @@ struct Index {
       version: model.version,
       pma: ui.pma,
       configScale: config !== null ? config.scale : 1,
-      idleMotion: config !== null ? config.idle_motion : ''
+      idleMotion: config !== null ? config.idle_motion : '',
+      tapMotions: tapMotions
     });
     if (ui.currentAnimation.length > 0) {
       this.sendCommand({ cmd: BridgeCmdNames.PLAY_ANIMATION, slot: slot, name: ui.currentAnimation, loop: true });
@@ -673,6 +767,15 @@ struct Index {
     this.sendCommand({ cmd: BridgeCmdNames.SET_MIRROR, slot: slot, mirror: ui.mirrored });
     // 同理：reset 使 alpha 归 1 → 重载后恢复用户透明度偏好
     this.sendCommand({ cmd: BridgeCmdNames.SET_ALPHA, slot: slot, alpha: ui.alpha / 100 });
+    // 槽位播放速度恢复（Web 端 reset 归 1）
+    this.sendCommand({ cmd: BridgeCmdNames.SET_SPEED, slot: slot, speed: ui.speed });
+    // 循环轮播列表恢复（Web 端 reset 清空）
+    this.sendCommand({
+      cmd: BridgeCmdNames.SET_PLAYLIST,
+      slot: slot,
+      names: ui.playlist,
+      enabled: ui.playlistEnabled
+    });
   }
 
   /** 用偏好与模型元数据初始化槽位 UI 状态。 */
@@ -707,6 +810,8 @@ struct Index {
     const pma = prefs.getBool(SlotPrefs.pmaKey(slot), true);
     const mirrored = prefs.getBool(SlotPrefs.mirrorKey(slot), false);
     const alpha = clampInt(prefs.getNumber(SlotPrefs.alphaKey(slot), 100), 10, 100);
+    const speed = clampFloat2(prefs.getNumber(SlotPrefs.speedKey(slot), 1), 0.25, 2);
+    const playlistPrefs = prefs.getPlaylist(SlotPrefs.playlistJsonKey(slot));
     this.updateSlotUi(slot, (state: SlotUiState): void => {
       state.animations = animations;
       state.skins = skins;
@@ -715,6 +820,9 @@ struct Index {
       state.pma = pma;
       state.mirrored = mirrored;
       state.alpha = alpha;
+      state.speed = speed;
+      state.playlist = playlistPrefs.names;
+      state.playlistEnabled = playlistPrefs.enabled;
     });
   }
 
@@ -744,6 +852,12 @@ struct Index {
       this.library.updateModelAnimSkins(event.modelId, event.animations, event.skins);
       this.reloadModels();
     }
+    // 缩略图管线临时加载（槽 0 非主模型）：仅回填库元数据，不改动槽位 UI 状态、
+    // 不回写偏好——避免临时模型的动画/皮肤/轮播覆盖主模型的持久化偏好。
+    // Web 侧自行解析默认动画（desired > idle_motion > first）用于截帧。
+    if (this.thumbGenerating && event.slot === 0 && event.modelId !== this.mainModelId) {
+      return;
+    }
     this.updateSlotUi(event.slot, (state: SlotUiState): void => {
       state.animations = event.animations;
       state.skins = event.skins;
@@ -755,19 +869,35 @@ struct Index {
       }
       const kept = state.selectedSkins.filter((name: string): boolean => event.skins.includes(name));
       state.selectedSkins = kept.length > 0 ? kept : (event.skins.length > 0 ? [event.skins[0]] : []);
+      // 轮播列表校正：过滤已不存在的动画名（SKEL 占位 meta 场景靠真实动画名校正）
+      const keptPlaylist = state.playlist.filter((name: string): boolean => event.animations.includes(name));
+      if (keptPlaylist.length !== state.playlist.length) {
+        state.playlist = keptPlaylist;
+        if (keptPlaylist.length === 0) {
+          state.playlistEnabled = false;
+        }
+      }
     });
     const ui = this.slotUi[event.slot];
     const prefs = this.prefs;
     if (prefs !== null) {
       prefs.putString(SlotPrefs.animationKey(event.slot), ui.currentAnimation);
       prefs.putSelectedSkins(SlotPrefs.skinsJsonKey(event.slot), ui.selectedSkins);
+      prefs.putPlaylist(SlotPrefs.playlistJsonKey(event.slot), new PlaylistPrefs(ui.playlistEnabled, ui.playlist));
       prefs.flush();
     }
     // 加载后校正动画与皮肤（偏好中的名称可能已不存在）
     this.sendCommand({ cmd: BridgeCmdNames.PLAY_ANIMATION, slot: event.slot, name: ui.currentAnimation, loop: true });
     this.sendCommand({ cmd: BridgeCmdNames.SET_SKINS, slot: event.slot, skins: ui.selectedSkins });
+    // 轮播列表校正后重发（Web 端按真实动画名解析并启播）
+    this.sendCommand({
+      cmd: BridgeCmdNames.SET_PLAYLIST,
+      slot: event.slot,
+      names: ui.playlist,
+      enabled: ui.playlistEnabled
+    });
     if (this.widgetAutoUpdate) {
-      this.scheduleWidgetCapture();
+      this.widget.scheduleCapture();
     }
   }
 
@@ -782,11 +912,7 @@ struct Index {
       this.modelLoading = false;
     }
     if (event.code === 'CAPTURE_ERROR') {
-      this.capturing = false;
-      this.clearCaptureTimer();
-      if (this.capturePurpose === CAPTURE_PURPOSE_THUMB) {
-        this.resolveThumbCapture(false);
-      }
+      this.capture.abort();
     }
     this.getUIContext().getPromptAction().showToast({ message: event.message, duration: 2500 });
   }
@@ -810,6 +936,11 @@ struct Index {
     if (event === null) {
       return;
     }
+    // 缩略图管线期间槽 0 为临时模型：动画变化不更新 UI、不回写偏好
+    // （管线结束后 loadSlotModel(0) 会经 handleModelLoaded 完整重建状态）
+    if (this.thumbGenerating && event.slot === 0) {
+      return;
+    }
     this.updateSlotUi(event.slot, (state: SlotUiState): void => {
       state.currentAnimation = event.name;
     });
@@ -820,53 +951,14 @@ struct Index {
     }
   }
 
-  private handleCaptureChunk(json: string): void {
-    const event = parseCaptureChunkEvent(json);
-    if (event === null) {
+  /** 截帧成功回调（由 CaptureCoordinator 分发，按用途路由）。 */
+  private handleCaptureComplete(base64: string, purpose: string): void {
+    if (purpose === CAPTURE_PURPOSE_THUMB) {
+      this.thumbPipeline.onFrameComplete(base64);
       return;
     }
-    if (event.index === 0) {
-      this.captureChunks = [];
-      this.captureTotal = event.total;
-    }
-    if (event.total !== this.captureTotal || event.index !== this.captureChunks.length) {
-      return;
-    }
-    this.captureChunks.push(event.data);
-  }
-
-  private handleCaptureDone(json: string): void {
-    const event = parseCaptureFrameEvent(json);
-    if (event === null || !event.done) {
-      return;
-    }
-    this.clearCaptureTimer();
-    if (this.captureTotal === 0 || this.captureChunks.length !== this.captureTotal) {
-      this.capturing = false;
-      this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_capture_fail') });
-      return;
-    }
-    const base64 = this.captureChunks.join('');
-    this.captureChunks = [];
-    this.captureTotal = 0;
-    if (this.capturePurpose === CAPTURE_PURPOSE_THUMB) {
-      const thumbId = this.pendingThumbModelId;
-      const context: Context = getContext(this);
-      ThumbStore.saveThumb(context, base64, thumbId)
-        .then((): void => {
-          this.capturing = false;
-          this.markThumbGenerated(thumbId);
-          this.resolveThumbCapture(true);
-        })
-        .catch((err: BusinessError): void => {
-          this.capturing = false;
-          this.resolveThumbCapture(false);
-        });
-      return;
-    }
-    if (this.capturePurpose === CAPTURE_PURPOSE_WIDGET ||
-      this.capturePurpose === CAPTURE_PURPOSE_WIDGET_MANUAL) {
-      this.saveWidgetSnapshot(base64, this.capturePurpose === CAPTURE_PURPOSE_WIDGET_MANUAL);
+    if (purpose === CAPTURE_PURPOSE_WIDGET || purpose === CAPTURE_PURPOSE_WIDGET_MANUAL) {
+      this.widget.saveSnapshot(base64, purpose === CAPTURE_PURPOSE_WIDGET_MANUAL);
       return;
     }
     FrameExporter.saveToGallery(getContext(this), base64)
@@ -874,13 +966,25 @@ struct Index {
         this.capturing = false;
         this.resumeAfterOverlay();
         this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_capture_ok') });
-        this.updateWidgetFromFrame(base64);
+        this.widget.updateFromFrame(base64);
       })
       .catch((err: BusinessError): void => {
         this.capturing = false;
         this.resumeAfterOverlay();
         this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_capture_fail') });
       });
+  }
+
+  /** 截帧失败/超时回调（按用途路由，避免缩略图管线悬挂）。 */
+  private handleCaptureFail(purpose: string): void {
+    if (purpose === CAPTURE_PURPOSE_THUMB) {
+      this.thumbPipeline.resolveCapture(false);
+      return;
+    }
+    if (purpose === CAPTURE_PURPOSE_WIDGET || purpose === CAPTURE_PURPOSE_WIDGET_MANUAL) {
+      return;
+    }
+    this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_capture_fail') });
   }
 
   // ==================== 用户操作 ====================
@@ -949,7 +1053,7 @@ struct Index {
       this.showImportResultToast(result);
       if (result.importedIds.length > 0) {
         // 导入钩子：新导入模型自动补缩略图（管线串行，完成后恢复主模型）
-        this.generateThumbs(result.importedIds);
+        this.thumbPipeline.generate(result.importedIds);
       }
       if (this.mainModelId.length === 0 && result.firstImportedId.length > 0) {
         this.applyModelSelection(0, result.firstImportedId);
@@ -993,7 +1097,7 @@ struct Index {
     this.getUIContext().getPromptAction().showToast({ message: parts.join('，'), duration: 3500 });
   }
 
-  /** 选择模型到指定槽位（4.1 运行时门禁 + 偏好持久化 + 下发加载）。 */
+  /** 选择模型到指定槽位（运行时版本门禁：已集成 3.8 / 4.0 / 4.1 / 4.2 + 偏好持久化 + 下发加载）。 */
   private applyModelSelection(slot: number, modelId: string): void {
     const library = this.library;
     const prefs = this.prefs;
@@ -1143,28 +1247,6 @@ struct Index {
     this.trashEntries = library.getTrashedModels();
   }
 
-  /** 启动时按保留策略清除过期回收站条目（retentionDays <= 0 永久保留）。 */
-  private purgeExpiredTrashAtStartup(retentionDays: number): void {
-    const library = this.library;
-    if (library === null || retentionDays <= 0) {
-      return;
-    }
-    library.purgeExpiredTrash(retentionDays)
-      .then((purgedIds: Array<string>): void => {
-        if (purgedIds.length === 0) {
-          return;
-        }
-        const context: Context = getContext(this);
-        for (const id of purgedIds) {
-          ThumbStore.deleteThumb(context, id);
-        }
-        this.refreshTrashEntries();
-      })
-      .catch((err: BusinessError): void => {
-        console.error(`${TAG} purgeExpiredTrash failed: ${JSON.stringify(err)}`);
-      });
-  }
-
   /** 重命名模型：弹窗预填当前名，确认后持久化。 */
   private renameModelAction(modelId: string): void {
     const library = this.library;
@@ -1200,62 +1282,6 @@ struct Index {
   private openTrashAction(): void {
     this.refreshTrashEntries();
     this.trashController.open();
-  }
-
-  /** 回收站内恢复单个模型。 */
-  private restoreTrashedModel(modelId: string): void {
-    const library = this.library;
-    if (library === null) {
-      return;
-    }
-    library.restoreFromTrash(modelId)
-      .then((ok: boolean): void => {
-        this.refreshTrashEntries();
-        if (ok) {
-          this.reloadModels();
-          this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_trash_restored') });
-        }
-      })
-      .catch((err: BusinessError): void => {
-        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_trash_restore_fail') });
-      });
-  }
-
-  /** 回收站内彻底删除单个模型（含缩略图）。 */
-  private purgeTrashedModel(modelId: string): void {
-    const library = this.library;
-    if (library === null) {
-      return;
-    }
-    library.purgeTrashEntry(modelId)
-      .then((): void => {
-        ThumbStore.deleteThumb(getContext(this), modelId);
-        this.refreshTrashEntries();
-        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_trash_purged') });
-      })
-      .catch((err: BusinessError): void => {
-        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_delete_fail') });
-      });
-  }
-
-  /** 清空回收站（含全部缩略图）。 */
-  private emptyTrashAction(): void {
-    const library = this.library;
-    if (library === null) {
-      return;
-    }
-    library.emptyTrash()
-      .then((purgedIds: Array<string>): void => {
-        const context: Context = getContext(this);
-        for (const id of purgedIds) {
-          ThumbStore.deleteThumb(context, id);
-        }
-        this.refreshTrashEntries();
-        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_trash_emptied') });
-      })
-      .catch((err: BusinessError): void => {
-        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_delete_fail') });
-      });
   }
 
   // ==================== 分组操作 ====================
@@ -1455,6 +1481,10 @@ struct Index {
         continue;
       }
       const ui = this.slotUi[slot];
+      // 轮播列表启用的槽位已在自动循环，避开定时轮换
+      if (ui.playlistEnabled) {
+        continue;
+      }
       if (ui.animations.length < 2) {
         continue;
       }
@@ -1569,6 +1599,86 @@ struct Index {
     const prefs = this.prefs;
     if (prefs !== null) {
       prefs.putNumber(SlotPrefs.alphaKey(slot), value);
+      prefs.flush();
+    }
+  }
+
+  /** 设置页：槽位播放速度（0.25-2，两位小数，持久化 + 下发 Web timeScale）。 */
+  private setSlotSpeed(slot: number, speed: number): void {
+    const value = clampFloat2(speed, 0.25, 2);
+    this.updateSlotUi(slot, (state: SlotUiState): void => {
+      state.speed = value;
+    });
+    this.sendCommand({ cmd: BridgeCmdNames.SET_SPEED, slot: slot, speed: value });
+    const prefs = this.prefs;
+    if (prefs !== null) {
+      prefs.putNumber(SlotPrefs.speedKey(slot), value);
+      prefs.flush();
+    }
+  }
+
+  /** 设置页：全局动画过渡混合秒数（0-0.5，持久化 + 下发 Web defaultMix）。 */
+  private setAnimationMix(mix: number): void {
+    const value = clampFloat2(mix, 0, 0.5);
+    if (value === this.animationMix) {
+      return;
+    }
+    this.animationMix = value;
+    this.sendCommand({ cmd: BridgeCmdNames.SET_MIX, mix: value });
+    const prefs = this.prefs;
+    if (prefs !== null) {
+      prefs.putNumber(PrefsKeys.ANIMATION_MIX, value);
+      prefs.flush();
+    }
+  }
+
+  /** 控制条：轮播模式开关（当前控制目标槽位，持久化 + 下发）。 */
+  private togglePlaylistMode(): void {
+    const slot = this.selectedSlot;
+    // 无长度门槛：空列表也允许进入多选模式（Web 侧对空列表自动禁用轮播，仅保持底层动画）；
+    // 关闭时 Web 侧恢复单动画循环。
+    this.updateSlotUi(slot, (state: SlotUiState): void => {
+      state.playlistEnabled = !state.playlistEnabled;
+    });
+    const ui = this.slotUi[slot];
+    this.sendCommand({
+      cmd: BridgeCmdNames.SET_PLAYLIST,
+      slot: slot,
+      names: ui.playlist,
+      enabled: ui.playlistEnabled
+    });
+    const prefs = this.prefs;
+    if (prefs !== null) {
+      prefs.putPlaylist(SlotPrefs.playlistJsonKey(slot), new PlaylistPrefs(ui.playlistEnabled, ui.playlist));
+      prefs.flush();
+    }
+  }
+
+  /** 控制条：轮播列表成员切换（当前控制目标槽位，追加到末尾/移除，持久化 + 下发）。 */
+  private togglePlaylistItem(name: string): void {
+    const slot = this.selectedSlot;
+    this.updateSlotUi(slot, (state: SlotUiState): void => {
+      if (state.playlist.includes(name)) {
+        state.playlist = state.playlist.filter((item: string): boolean => item !== name);
+        if (state.playlist.length === 0) {
+          state.playlistEnabled = false;
+        }
+      } else {
+        const next = state.playlist.slice();
+        next.push(name);
+        state.playlist = next;
+      }
+    });
+    const ui = this.slotUi[slot];
+    this.sendCommand({
+      cmd: BridgeCmdNames.SET_PLAYLIST,
+      slot: slot,
+      names: ui.playlist,
+      enabled: ui.playlistEnabled
+    });
+    const prefs = this.prefs;
+    if (prefs !== null) {
+      prefs.putPlaylist(SlotPrefs.playlistJsonKey(slot), new PlaylistPrefs(ui.playlistEnabled, ui.playlist));
       prefs.flush();
     }
   }
@@ -1780,67 +1890,12 @@ struct Index {
     }
   }
 
-  private startCapture(purpose: string): void {
-    if (this.capturing || !this.webReady) {
-      return;
-    }
-    this.capturing = true;
-    this.capturePurpose = purpose;
-    this.captureChunks = [];
-    this.captureTotal = 0;
-    this.sendCommand({ cmd: BridgeCmdNames.CAPTURE_FRAME });
-    this.captureTimerId = setTimeout((): void => {
-      if (this.capturing) {
-        this.capturing = false;
-        if (this.capturePurpose === CAPTURE_PURPOSE_THUMB) {
-          this.resolveThumbCapture(false);
-        } else {
-          this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_capture_fail') });
-        }
-      }
-    }, CAPTURE_TIMEOUT_MS);
-  }
-
-  private clearCaptureTimer(): void {
-    if (this.captureTimerId >= 0) {
-      clearTimeout(this.captureTimerId);
-      this.captureTimerId = -1;
-    }
-  }
-
   // ==================== 桌面卡片 ====================
 
   private toggleWidgetAutoUpdate(enabled: boolean): void {
     this.widgetAutoUpdate = enabled;
     this.prefs?.putBool(PrefsKeys.WIDGET_AUTO_UPDATE, enabled);
     this.prefs?.flush();
-  }
-
-  /** 手动“立即更新卡片”：截取当前帧更新快照并刷新卡片。 */
-  private updateWidgetNow(): void {
-    this.startCapture(CAPTURE_PURPOSE_WIDGET_MANUAL);
-  }
-
-  /** 模型加载后延时截帧更新卡片（等首帧稳定；仅已添加卡片时执行）。 */
-  private scheduleWidgetCapture(): void {
-    this.clearWidgetTimer();
-    this.widgetCaptureTimerId = setTimeout((): void => {
-      this.widgetCaptureTimerId = -1;
-      if (!this.widgetAutoUpdate || this.thumbGenerating || this.capturing || !this.webReady) {
-        return;
-      }
-      const ids = WidgetFormsStore.readFormIds(getContext(this));
-      if (ids.length > 0) {
-        this.startCapture(CAPTURE_PURPOSE_WIDGET);
-      }
-    }, WIDGET_CAPTURE_DELAY_MS);
-  }
-
-  private clearWidgetTimer(): void {
-    if (this.widgetCaptureTimerId >= 0) {
-      clearTimeout(this.widgetCaptureTimerId);
-      this.widgetCaptureTimerId = -1;
-    }
   }
 
   // ==================== 模型缩略图 ====================
@@ -1873,209 +1928,6 @@ struct Index {
     }
   }
 
-  private resolveThumbCapture(ok: boolean): void {
-    const r = this.thumbCaptureResolve;
-    this.thumbCaptureResolve = null;
-    if (r !== null) {
-      r(ok);
-    }
-  }
-
-  private delay(ms: number): Promise<void> {
-    return new Promise<void>((resolve: (v: void) => void) => {
-      setTimeout(resolve, ms);
-    });
-  }
-
-  /** 轮询等待条件成立（100ms 间隔，超时返回 false）。 */
-  private waitUntil(cond: () => boolean, timeoutMs: number): Promise<boolean> {
-    const deadline = Date.now() + timeoutMs;
-    return new Promise<boolean>((resolve: (ok: boolean) => void) => {
-      const check = (): void => {
-        if (cond()) {
-          resolve(true);
-        } else if (Date.now() > deadline) {
-          resolve(false);
-        } else {
-          setTimeout(check, 100);
-        }
-      };
-      setTimeout(check, 100);
-    });
-  }
-
-  /** 缩略图管线专用加载：LOAD_MODEL 到槽 0，不写偏好、不改 mainModelId。 */
-  private async loadModelForThumb(model: SpineModelItem): Promise<void> {
-    const library = this.library;
-    if (library === null) {
-      return;
-    }
-    let atlasFile = model.atlasFile;
-    if (atlasFile.length > 0) {
-      const sanitized = await sanitizeAtlas(model.atlasPath());
-      atlasFile = sanitized.atlasFile;
-    }
-    const config = library.readModelConfig(model);
-    this.modelLoading = true;
-    this.sendCommand({
-      cmd: BridgeCmdNames.LOAD_MODEL,
-      slot: 0,
-      modelId: model.id,
-      skelFile: model.skelFile,
-      atlasFile: atlasFile,
-      version: model.version,
-      pma: this.slotUi[0].pma,
-      configScale: config !== null ? config.scale : 1,
-      idleMotion: config !== null ? config.idle_motion : ''
-    });
-    this.sendCommand({ cmd: BridgeCmdNames.SET_TRANSFORM, slot: 0, scale: 1, x: 0, y: 0 });
-  }
-
-  /** 收集缺少缩略图且可渲染的模型 id 并启动补全管线。 */
-  private startThumbGenerationForMissing(): void {
-    if (this.thumbGenerating) {
-      return;
-    }
-    const ids = new Array<string>();
-    for (const m of this.models) {
-      if (!m.hasThumb && m.isSupported()) {
-        ids.push(m.id);
-      }
-    }
-    if (ids.length > 0) {
-      this.generateThumbs(ids);
-    }
-  }
-
-  /**
-   * 串行生成缩略图：逐个加载到槽 0 → 稳帧 → 截帧存缩略图，完成后恢复主模型。
-   * 运行期间抑制 widget 自动截帧（scheduleWidgetCapture guard）。
-   */
-  private async generateThumbs(ids: Array<string>): Promise<void> {
-    const library = this.library;
-    if (library === null || this.thumbGenerating || ids.length === 0) {
-      return;
-    }
-    this.thumbGenerating = true;
-    this.thumbGenTotal = ids.length;
-    this.thumbGenCurrent = 0;
-    const restoreId = this.mainModelId;
-    // 管线会 LOAD_MODEL 到槽 0（Web 端加载即显示）：结束后需恢复用户原本对主模型的隐藏状态
-    const mainWasHidden = !this.slotVisible[0];
-    let okCount = 0;
-    try {
-      for (const id of ids) {
-        const model = library.getModelById(id);
-        if (model === null || !model.isSupported()) {
-          continue;
-        }
-        this.thumbGenCurrent++;
-        await this.loadModelForThumb(model);
-        const ready = await this.waitUntil((): boolean => !this.modelLoading, THUMB_MODEL_TIMEOUT_MS);
-        if (!ready) {
-          this.modelLoading = false;
-          hilog.warn(LOG_DOMAIN, TAG, 'thumb model load timeout id=%{public}s', id);
-          continue;
-        }
-        await this.delay(THUMB_SETTLE_MS);
-        if (this.capturing || !this.webReady) {
-          continue;
-        }
-        this.pendingThumbModelId = id;
-        const captured = new Promise<boolean>((resolve: (ok: boolean) => void) => {
-          this.thumbCaptureResolve = resolve;
-        });
-        this.startCapture(CAPTURE_PURPOSE_THUMB);
-        if (await captured) {
-          okCount++;
-          hilog.info(LOG_DOMAIN, TAG, 'thumb saved id=%{public}s', id);
-        }
-      }
-    } finally {
-      this.thumbGenerating = false;
-      this.thumbCaptureResolve = null;
-      this.pendingThumbModelId = '';
-      this.thumbGenCurrent = 0;
-      this.thumbGenTotal = 0;
-      if (restoreId.length > 0 && restoreId === this.mainModelId) {
-        this.loadSlotModel(0);
-        if (mainWasHidden) {
-          this.slotVisible[0] = false;
-          this.slotVisible = this.slotVisible.slice();
-          this.sendCommand({ cmd: BridgeCmdNames.SET_SLOT_VISIBLE, slot: 0, visible: false });
-        }
-      }
-    }
-    if (okCount === ids.length) {
-      this.getUIContext().getPromptAction().showToast({ message: $r('app.string.thumb_gen_done') });
-    } else {
-      this.getUIContext().getPromptAction().showToast({
-        message: $r('app.string.thumb_gen_partial', okCount, ids.length - okCount),
-        duration: 3000
-      });
-    }
-  }
-
-  /** 保存快照并刷新全部卡片（widget 截帧完成路径）。 */
-  private saveWidgetSnapshot(base64: string, showResult: boolean): void {
-    const context: Context = getContext(this);
-    const title = this.currentMainModelName();
-    try {
-      WidgetSnapshotStore.saveSnapshot(context, base64, title);
-    } catch (err) {
-      this.capturing = false;
-      hilog.warn(LOG_DOMAIN, TAG, 'save widget snapshot failed');
-      if (showResult) {
-        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_capture_fail') });
-      }
-      return;
-    }
-    // 卡片快照与主模型画面一致，顺带落一份缩略图（缩略主模型随用随得）
-    if (!this.thumbGenerating && this.mainModelId.length > 0) {
-      const mainId = this.mainModelId;
-      ThumbStore.saveThumb(context, base64, mainId)
-        .then((): void => {
-          this.markThumbGenerated(mainId);
-        })
-        .catch((err: BusinessError): void => {
-          hilog.warn(LOG_DOMAIN, TAG, 'save thumb piggyback failed');
-        });
-    }
-    WidgetUpdater.updateAll(context)
-      .then((): void => {
-        this.capturing = false;
-        if (showResult) {
-          this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_widget_updated') });
-        }
-      })
-      .catch((err: BusinessError): void => {
-        this.capturing = false;
-        if (showResult) {
-          this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_capture_fail') });
-        }
-      });
-  }
-
-  /** 保存到图库成功后顺带刷新卡片（自动更新开启时复用同一帧）。 */
-  private updateWidgetFromFrame(base64: string): void {
-    if (!this.widgetAutoUpdate) {
-      return;
-    }
-    const context: Context = getContext(this);
-    const ids = WidgetFormsStore.readFormIds(context);
-    if (ids.length === 0) {
-      return;
-    }
-    try {
-      WidgetSnapshotStore.saveSnapshot(context, base64, this.currentMainModelName());
-      WidgetUpdater.updateAll(context).catch((err: BusinessError): void => {
-        hilog.warn(LOG_DOMAIN, TAG, 'update widget after capture failed');
-      });
-    } catch (err) {
-      hilog.warn(LOG_DOMAIN, TAG, 'save widget snapshot after capture failed');
-    }
-  }
-
   private currentMainModelName(): string {
     for (const item of this.models) {
       if (item.id === this.mainModelId) {
@@ -2086,55 +1938,3 @@ struct Index {
   }
 }
 
-// ==================== 颜色与数值工具（模块级具名函数） ====================
-
-/** 0xAARRGGBB 整型色值 → '#RRGGBB' 显示串。 */
-function intColorToHex(color: number): string {
-  const rgb = color & 0xFFFFFF;
-  const r = (rgb >> 16) & 0xFF;
-  const g = (rgb >> 8) & 0xFF;
-  const b = rgb & 0xFF;
-  return `#${toHex2(r)}${toHex2(g)}${toHex2(b)}`;
-}
-
-function toHex2(value: number): string {
-  const hex = value.toString(16).toUpperCase();
-  return hex.length === 1 ? `0${hex}` : hex;
-}
-
-/** '#RRGGBB' → 0xAARRGGBB 整型色值（非法回退默认背景色）。 */
-function hexToIntColor(hex: string): number {
-  const clean = hex.startsWith('#') ? hex.substring(1) : hex;
-  const rgbText = clean.length === 8 ? clean.substring(2) : clean;
-  if (rgbText.length !== 6) {
-    return PrefsManager.defaultBgColor;
-  }
-  const rgb = parseInt(rgbText, 16);
-  if (Number.isNaN(rgb)) {
-    return PrefsManager.defaultBgColor;
-  }
-  return 0xFF000000 | rgb;
-}
-
-/** 归一化为 '#RRGGBB'（兼容 8 位 ARGB 输入，如 HdsColorPicker 回调值）。 */
-function normalizeRgbHex(hex: string): string {
-  const clean = hex.startsWith('#') ? hex.substring(1) : hex;
-  const rgbText = clean.length === 8 ? clean.substring(2) : clean;
-  if (rgbText.length !== 6) {
-    return '#0F172A';
-  }
-  const rgb = parseInt(rgbText, 16);
-  if (Number.isNaN(rgb)) {
-    return '#0F172A';
-  }
-  const r = (rgb >> 16) & 0xFF;
-  const g = (rgb >> 8) & 0xFF;
-  const b = rgb & 0xFF;
-  return `#${toHex2(r)}${toHex2(g)}${toHex2(b)}`;
-}
-
-/** 数值夹取并取整。 */
-function clampInt(value: number, min: number, max: number): number {
-  const v = Math.round(value);
-  return Math.min(max, Math.max(min, v));
-}

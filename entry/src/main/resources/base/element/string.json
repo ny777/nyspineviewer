@@ -513,6 +513,22 @@
       "value": "%d%"
     },
     {
+      "name": "settings_speed_main",
+      "value": "播放速度（模型1）"
+    },
+    {
+      "name": "settings_speed_sub",
+      "value": "播放速度（模型2）"
+    },
+    {
+      "name": "settings_mix_label",
+      "value": "动画过渡"
+    },
+    {
+      "name": "playlist_toggle",
+      "value": "循环轮播"
+    },
+    {
       "name": "settings_widget_update_now",
       "value": "立即更新卡片"
     },

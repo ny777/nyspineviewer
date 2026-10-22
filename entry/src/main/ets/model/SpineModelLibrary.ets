@@ -5,12 +5,12 @@
  * → 版本嗅探 → files/models/<uuid>/ 落盘 + model_meta.json + library.json 索引。
  */
 import { fileIo } from '@kit.CoreFileKit';
-import { zlib } from '@kit.BasicServicesKit';
+import { zlib, BusinessError } from '@kit.BasicServicesKit';
 import { util } from '@kit.ArkTS';
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { Context } from '@kit.AbilityKit';
 import { SpineModelItem } from './SpineModelItem';
-import { detectSpineVersion } from '../core/SpineVersionDetector';
+import { detectFormat, detectSpineVersionFromText } from '../core/SpineVersionDetector';
 import { spineVersionToString } from '../core/SpineVersion';
 import { peekSkelBinaryFile } from '../core/SpineBinaryPeeker';
 import { Live2DConfig, parseLive2DConfig } from './Live2DConfig';
@@ -146,13 +146,22 @@ export class SpineModelLibrary {
     return SpineModelLibrary.instance;
   }
 
-  /** 读取 library.json 索引（过滤目录已缺失的条目）。 */
+  /** 读取 library.json 索引（过滤目录已缺失的条目）。目录存在性用一次 listFileSync 建集校验，避免逐条 stat。 */
   async loadModels(): Promise<Array<SpineModelItem>> {
     const loaded = this.readLibraryIndex();
+    const existingDirs = new Set<string>();
+    try {
+      const names: Array<string> = fileIo.listFileSync(this.modelsRoot);
+      for (let i = 0; i < names.length; i++) {
+        existingDirs.add(names[i]);
+      }
+    } catch (err) {
+      // models 目录不可列时按全部缺失处理（下方逐条剔除）
+    }
     const alive = new Array<SpineModelItem>();
     let dropped = false;
     for (const item of loaded) {
-      if (fileIo.accessSync(item.folderPath, fileIo.AccessModeType.EXIST)) {
+      if (existingDirs.has(item.id)) {
         alive.push(item);
       } else {
         dropped = true;
@@ -219,34 +228,45 @@ export class SpineModelLibrary {
       }
     }
     const total = zipUris.length;
-    for (let i = 0; i < total; i++) {
-      if (shouldCancel !== undefined && shouldCancel()) {
-        result.cancelled = true;
-        break;
+    let indexDirty = false;
+    try {
+      for (let i = 0; i < total; i++) {
+        if (shouldCancel !== undefined && shouldCancel()) {
+          result.cancelled = true;
+          break;
+        }
+        const uri = zipUris[i];
+        let stage: ZipStage | null = null;
+        try {
+          stage = await this.stageZip(uri);
+          const group = stage.skelFiles.length >= 2 ? zipDisplayName(uri) : fallbackGroup;
+          const staged = await this.importStaged(stage, group, seenHashes);
+          if (staged.imported.length > 0) {
+            indexDirty = true;
+          }
+          result.importedCount += staged.imported.length;
+          for (const item of staged.imported) {
+            result.importedIds.push(item.id);
+          }
+          result.skippedDuplicates += staged.duplicates;
+          if (result.firstImportedId === '' && staged.imported.length > 0) {
+            result.firstImportedId = staged.imported[0].id;
+          }
+        } catch (err) {
+          console.error(`${TAG} importBatch zip failed: ${JSON.stringify(err)}`);
+          result.failedZips.push(zipDisplayName(uri));
+        } finally {
+          if (stage !== null) {
+            this.cleanupTemp(stage.stagingDir, stage.zipTmpPath);
+          }
+        }
+        onProgress(i + 1, total);
       }
-      const uri = zipUris[i];
-      let stage: ZipStage | null = null;
-      try {
-        stage = await this.stageZip(uri);
-        const group = stage.skelFiles.length >= 2 ? zipDisplayName(uri) : fallbackGroup;
-        const staged = await this.importStaged(stage, group, seenHashes);
-        result.importedCount += staged.imported.length;
-        for (const item of staged.imported) {
-          result.importedIds.push(item.id);
-        }
-        result.skippedDuplicates += staged.duplicates;
-        if (result.firstImportedId === '' && staged.imported.length > 0) {
-          result.firstImportedId = staged.imported[0].id;
-        }
-      } catch (err) {
-        console.error(`${TAG} importBatch zip failed: ${JSON.stringify(err)}`);
-        result.failedZips.push(zipDisplayName(uri));
-      } finally {
-        if (stage !== null) {
-          this.cleanupTemp(stage.stagingDir, stage.zipTmpPath);
-        }
+    } finally {
+      // library.json 整批只写一次（中途取消/异常也保证已导入部分落盘）
+      if (indexDirty) {
+        this.writeLibraryIndex(this.models);
       }
-      onProgress(i + 1, total);
     }
     return result;
   }
@@ -262,7 +282,6 @@ export class SpineModelLibrary {
     stage.zipTmpPath = `${this.cacheDir}/import_${uuid}.zip`;
     fileIo.mkdirSync(stage.stagingDir);
 
-    let extractedCount = 0;
     try {
       const srcFile = fileIo.openSync(zipUri, fileIo.OpenMode.READ_ONLY);
       try {
@@ -271,19 +290,19 @@ export class SpineModelLibrary {
         fileIo.closeSync(srcFile);
       }
       await zlib.decompressFile(stage.zipTmpPath, stage.stagingDir);
-      extractedCount = collectFilesRecursive(stage.stagingDir).length;
     } catch (err) {
       this.cleanupTemp(stage.stagingDir, stage.zipTmpPath);
       throw new Error(`无法解压所选 ZIP 文件，请确认选择的是有效的 Spine 2D ZIP 压缩包：${JSON.stringify(err)}`);
     }
 
-    if (extractedCount === 0) {
+    // 解压树单次递归扫描，后续（骨架收集/贴图校验）全部复用
+    const allFiles = collectFilesRecursive(stage.stagingDir);
+    if (allFiles.length === 0) {
       this.cleanupTemp(stage.stagingDir, stage.zipTmpPath);
       throw new Error('无法从所选 ZIP 文件解压内容，请确认选择的是有效的 Spine 2D ZIP 压缩包');
     }
 
     // 收集骨架候选文件
-    const allFiles = collectFilesRecursive(stage.stagingDir);
     const skelFiles = new Array<string>();
     for (const file of allFiles) {
       if (isSkelCandidate(file)) {
@@ -300,7 +319,7 @@ export class SpineModelLibrary {
 
     // 导入时贴图存在性校验：atlas 引用的页在暂存树中完全无匹配即失败（提前拦截渲染期黑屏）
     try {
-      this.validateStagedTextures(stage);
+      this.validateStagedTextures(stage, allFiles);
     } catch (err) {
       this.cleanupTemp(stage.stagingDir, stage.zipTmpPath);
       throw err as Error;
@@ -312,10 +331,11 @@ export class SpineModelLibrary {
    * 校验暂存产物内每个骨架的 atlas 页引用均能在暂存树中找到贴图文件
    * （basename + 小写 + 去扩展名宽松匹配，与 AtlasSanitizer 归一规则一致；
    * 大小写/反斜杠差异放行，加载时由 sanitize 修正）。缺失抛 Error。
+   * allFiles 为 stageZip 单次扫描出的暂存树全量文件列表。
    */
-  private validateStagedTextures(stage: ZipStage): void {
+  private validateStagedTextures(stage: ZipStage, allFiles: Array<string>): void {
     const fileIndex: Record<string, boolean> = {};
-    for (const file of collectFilesRecursive(stage.stagingDir)) {
+    for (const file of allFiles) {
       const name = baseName(file).toLowerCase();
       fileIndex[name] = true;
       const dot = name.lastIndexOf('.');
@@ -374,21 +394,24 @@ export class SpineModelLibrary {
         }
       }
       this.models = merged;
-      this.writeLibraryIndex(this.models);
+      // library.json 不在此逐 ZIP 写盘，由 importBatch 收尾统一写一次
     }
     return result;
   }
 
-  /** 导入单个模型（一个骨架 + 最小依赖集）。失败返回 failed，重复返回 duplicate。 */
+  /**
+   * 导入单个模型（一个骨架 + 最小依赖集）。失败返回 failed，重复返回 duplicate。
+   * 内容哈希在复制前基于暂存文件计算（与目标副本字节一致），命中重复直接跳过全部复制；
+   * 依赖集复制并行执行（Promise.all），贴图/config/备选骨架失败仅记录不中断。
+   */
   private async importOneModel(skelFullPath: string, stagingDir: string, group: string,
     seenHashes: Set<string>): Promise<ImportOneOutcome> {
     const outcome = new ImportOneOutcome();
     try {
       const skelName = baseName(skelFullPath);
       const modelRoot = parentDir(skelFullPath);
-      const modelId = util.generateRandomUUID(false);
-      const targetDir = `${this.modelsRoot}/${modelId}`;
-      fileIo.mkdirSync(targetDir, true);
+      const dirFiles = listDirFiles(modelRoot);
+      const base = stripSkelSuffix(skelName);
 
       // 模型显示名：骨架 basename；目录级通用名时回退为所在子目录名
       let rawName = stripSkelSuffix(skelName);
@@ -402,105 +425,41 @@ export class SpineModelLibrary {
         }
       }
       const modelName = rawName.length > 0 ? rawName : 'Spine Model';
-      const base = stripSkelSuffix(skelName);
-
-      const dirFiles = listDirFiles(modelRoot);
-
-      // 复制骨架文件（平铺到模型目录根）
-      await fileIo.copyFile(skelFullPath, `${targetDir}/${skelName}`);
-      const finalSkelPath = `${targetDir}/${skelName}`;
 
       // 匹配 atlas：同 basename 优先，否则目录内唯一 atlas
-      let atlasName = '';
       const matchedAtlas = findMatchedAtlas(dirFiles, base);
-      if (matchedAtlas !== null) {
-        atlasName = matchedAtlas;
-        await fileIo.copyFile(`${modelRoot}/${matchedAtlas}`, `${targetDir}/${matchedAtlas}`);
+      const atlasName = matchedAtlas !== null ? matchedAtlas : '';
+
+      // 内容哈希判重（skel + atlas 字节 SHA-256，复制前基于暂存路径计算）：命中即弃，未命中登记
+      const contentHash = await computeContentHash(skelFullPath,
+        atlasName.length > 0 ? `${modelRoot}/${atlasName}` : '');
+      if (contentHash.length > 0) {
+        if (seenHashes.has(contentHash)) {
+          outcome.status = 'duplicate';
+          return outcome;
+        }
+        seenHashes.add(contentHash);
       }
 
-      // 收集 atlas 引用的贴图并复制（平铺）
-      if (atlasName.length > 0) {
-        const usedImages = resolveAtlasImages(`${targetDir}/${atlasName}`);
-        const copiedNames = new Set<string>();
-        for (const img of usedImages) {
-          const src = findImageSource(dirFiles, img);
-          if (src !== null && !copiedNames.has(src)) {
-            copiedNames.add(src);
-            try {
-              await fileIo.copyFile(`${modelRoot}/${src}`, `${targetDir}/${src}`);
-            } catch (err) {
-              console.error(`${TAG} copy image ${src} failed: ${JSON.stringify(err)}`);
-            }
-          }
-        }
-        // 解析不到贴图时回退复制同前缀贴图
-        if (copiedNames.size === 0) {
-          for (const name of dirFiles) {
-            if (startsWithIgnoreCase(name, base) && isImageFile(name) && !copiedNames.has(name)) {
-              copiedNames.add(name);
-              try {
-                await fileIo.copyFile(`${modelRoot}/${name}`, `${targetDir}/${name}`);
-              } catch (err) {
-                console.error(`${TAG} copy fallback image ${name} failed: ${JSON.stringify(err)}`);
-              }
-            }
-          }
-        }
-      } else {
-        // 无 atlas（少见）：仅复制同前缀贴图
-        for (const name of dirFiles) {
-          if (startsWithIgnoreCase(name, base) && isImageFile(name)) {
-            try {
-              await fileIo.copyFile(`${modelRoot}/${name}`, `${targetDir}/${name}`);
-            } catch (err) {
-              console.error(`${TAG} copy prefix image ${name} failed: ${JSON.stringify(err)}`);
-            }
-          }
-        }
+      // 版本嗅探（JSON 文本只读一次，动画/皮肤嗅探复用同一文本）
+      const formatStr = detectFormat(skelFullPath);
+      let jsonText = '';
+      if (formatStr === 'JSON') {
+        jsonText = fileIo.readTextSync(skelFullPath);
       }
-
-      // 复制同名 .config.json（可选，提供 scale/动画偏好）
-      const configName = `${base}.config.json`;
-      for (const name of dirFiles) {
-        if (name === configName) {
-          try {
-            await fileIo.copyFile(`${modelRoot}/${name}`, `${targetDir}/${name}`);
-          } catch (err) {
-            console.error(`${TAG} copy config failed: ${JSON.stringify(err)}`);
-          }
-          break;
-        }
-      }
-
-      // 复制备选骨架（同前缀 .skel.bytes/.json，体积小，便于回退）
-      for (const name of dirFiles) {
-        const lower = name.toLowerCase();
-        if (name !== skelName && stripSkelSuffix(name) === base &&
-          (lower.endsWith('.skel.bytes') || lower.endsWith('.json'))) {
-          try {
-            await fileIo.copyFile(`${modelRoot}/${name}`, `${targetDir}/${name}`);
-          } catch (err) {
-            console.error(`${TAG} copy alt skeleton failed: ${JSON.stringify(err)}`);
-          }
-          break;
-        }
-      }
-
-      // 版本嗅探
-      const detected = detectSpineVersion(finalSkelPath);
+      const detected = detectSpineVersionFromText(skelFullPath, jsonText);
       const versionStr = spineVersionToString(detected.version);
-      const formatStr = detected.format;
 
       // 动画/皮肤名：JSON 直接读取；二进制 4.0/4.1/4.2 离线预解析（失败回退占位，加载后回填兜底）；
       // 3.8 二进制不做离线预解析，走占位 + 播放后回填（web 端解析真实名回报）
       let animations = new Array<string>();
       let skins = new Array<string>();
       if (formatStr === 'JSON') {
-        const peeked = peekAnimationsAndSkins(finalSkelPath);
+        const peeked = peekAnimationsAndSkinsFromText(jsonText);
         animations = peeked.animations;
         skins = peeked.skins;
       } else if (versionStr === '4.0' || versionStr === '4.1' || versionStr === '4.2') {
-        const peeked = peekSkelBinaryFile(finalSkelPath, versionStr);
+        const peeked = peekSkelBinaryFile(skelFullPath, versionStr);
         if (peeked !== null) {
           animations = peeked.animations;
           skins = peeked.skins;
@@ -512,6 +471,84 @@ export class SpineModelLibrary {
       if (skins.length === 0) {
         skins.push('default');
       }
+
+      // 目标目录 + 依赖集并行复制
+      const modelId = util.generateRandomUUID(false);
+      const targetDir = `${this.modelsRoot}/${modelId}`;
+      fileIo.mkdirSync(targetDir, true);
+      const copies = new Array<Promise<void>>();
+
+      // 复制骨架文件（平铺到模型目录根）
+      copies.push(fileIo.copyFile(skelFullPath, `${targetDir}/${skelName}`));
+
+      // 复制 atlas 与其引用贴图（平铺）
+      if (atlasName.length > 0) {
+        copies.push(fileIo.copyFile(`${modelRoot}/${atlasName}`, `${targetDir}/${atlasName}`));
+        const usedImages = resolveAtlasImages(`${modelRoot}/${atlasName}`);
+        const copiedNames = new Set<string>();
+        for (const img of usedImages) {
+          const src = findImageSource(dirFiles, img);
+          if (src !== null && !copiedNames.has(src)) {
+            copiedNames.add(src);
+            const imgSrc = src;
+            copies.push(fileIo.copyFile(`${modelRoot}/${src}`, `${targetDir}/${src}`)
+              .catch((err: BusinessError): void => {
+                console.error(`${TAG} copy image ${imgSrc} failed: ${JSON.stringify(err)}`);
+              }));
+          }
+        }
+        // 解析不到贴图时回退复制同前缀贴图
+        if (copiedNames.size === 0) {
+          for (const name of dirFiles) {
+            if (startsWithIgnoreCase(name, base) && isImageFile(name) && !copiedNames.has(name)) {
+              copiedNames.add(name);
+              const fbName = name;
+              copies.push(fileIo.copyFile(`${modelRoot}/${name}`, `${targetDir}/${name}`)
+                .catch((err: BusinessError): void => {
+                  console.error(`${TAG} copy fallback image ${fbName} failed: ${JSON.stringify(err)}`);
+                }));
+            }
+          }
+        }
+      } else {
+        // 无 atlas（少见）：仅复制同前缀贴图
+        for (const name of dirFiles) {
+          if (startsWithIgnoreCase(name, base) && isImageFile(name)) {
+            const pxName = name;
+            copies.push(fileIo.copyFile(`${modelRoot}/${name}`, `${targetDir}/${name}`)
+              .catch((err: BusinessError): void => {
+                console.error(`${TAG} copy prefix image ${pxName} failed: ${JSON.stringify(err)}`);
+              }));
+          }
+        }
+      }
+
+      // 复制同名 .config.json（可选，提供 scale/动画偏好）
+      const configName = `${base}.config.json`;
+      for (const name of dirFiles) {
+        if (name === configName) {
+          copies.push(fileIo.copyFile(`${modelRoot}/${name}`, `${targetDir}/${name}`)
+            .catch((err: BusinessError): void => {
+              console.error(`${TAG} copy config failed: ${JSON.stringify(err)}`);
+            }));
+          break;
+        }
+      }
+
+      // 复制备选骨架（同前缀 .skel.bytes/.json，体积小，便于回退）
+      for (const name of dirFiles) {
+        const lower = name.toLowerCase();
+        if (name !== skelName && stripSkelSuffix(name) === base &&
+          (lower.endsWith('.skel.bytes') || lower.endsWith('.json'))) {
+          const altName = name;
+          copies.push(fileIo.copyFile(`${modelRoot}/${name}`, `${targetDir}/${name}`)
+            .catch((err: BusinessError): void => {
+              console.error(`${TAG} copy alt skeleton failed: ${JSON.stringify(err)}`);
+            }));
+          break;
+        }
+      }
+      await Promise.all(copies);
 
       // 写 model_meta.json
       const meta: ModelMeta = {
@@ -527,18 +564,6 @@ export class SpineModelLibrary {
         writeTextFile(`${targetDir}/model_meta.json`, JSON.stringify(meta));
       } catch (err) {
         console.error(`${TAG} write meta failed: ${JSON.stringify(err)}`);
-      }
-
-      // 内容哈希判重（skel + atlas 字节 SHA-256）：命中即弃，未命中登记
-      const contentHash = await computeContentHash(finalSkelPath,
-        atlasName.length > 0 ? `${targetDir}/${atlasName}` : '');
-      if (contentHash.length > 0) {
-        if (seenHashes.has(contentHash)) {
-          deleteDirRecursive(targetDir);
-          outcome.status = 'duplicate';
-          return outcome;
-        }
-        seenHashes.add(contentHash);
       }
 
       const item = new SpineModelItem(modelId, modelName, targetDir, skelName, atlasName,
@@ -595,13 +620,25 @@ export class SpineModelLibrary {
         return new Array<TrashEntry>();
       }
       let dropped = false;
+      // 一次 listFileSync 建集校验回收站目录存在性，避免逐条 stat
+      const existingDirs = new Set<string>();
+      try {
+        const names: Array<string> = fileIo.listFileSync(this.trashRoot);
+        for (let i = 0; i < names.length; i++) {
+          existingDirs.add(names[i]);
+        }
+      } catch (err) {
+        // trash 目录不可列时按全部缺失处理
+      }
       for (const raw of rawItems) {
         if (typeof raw.id !== 'string' || typeof raw.name !== 'string' ||
           typeof raw.folderPath !== 'string' || typeof raw.skelFile !== 'string' ||
           typeof raw.deletedAt !== 'number' || !Number.isFinite(raw.deletedAt)) {
           continue;
         }
-        if (!fileIo.accessSync(raw.folderPath, fileIo.AccessModeType.EXIST)) {
+        const lastSlash = raw.folderPath.lastIndexOf('/');
+        const folderName = lastSlash >= 0 ? raw.folderPath.substring(lastSlash + 1) : raw.folderPath;
+        if (!existingDirs.has(folderName)) {
           dropped = true;
           continue;
         }
@@ -1315,12 +1352,11 @@ function findImageSource(dirFiles: Array<string>, imageName: string): string | n
   return null;
 }
 
-/** JSON 骨架动画/皮肤名嗅探（快路径）。 */
-function peekAnimationsAndSkins(skelJsonPath: string): PeekResult {
+/** JSON 骨架动画/皮肤名嗅探（快路径，文本由调用方一次读出复用，避免二次读盘解析）。 */
+function peekAnimationsAndSkinsFromText(jsonText: string): PeekResult {
   const result = new PeekResult();
   try {
-    const text = fileIo.readTextSync(skelJsonPath);
-    const raw = JSON.parse(text) as SkeletonPeekRaw;
+    const raw = JSON.parse(jsonText) as SkeletonPeekRaw;
     if (raw.animations !== undefined && raw.animations !== null) {
       const keys = Object.keys(raw.animations);
       for (const key of keys) {
@@ -1338,7 +1374,7 @@ function peekAnimationsAndSkins(skelJsonPath: string): PeekResult {
       }
     }
   } catch (err) {
-    console.error(`${TAG} peekAnimationsAndSkins failed: ${JSON.stringify(err)}`);
+    console.error(`${TAG} peekAnimationsAndSkinsFromText failed: ${JSON.stringify(err)}`);
   }
   return result;
 }

@@ -40,6 +40,11 @@ export class PrefsKeys {
   static readonly ANIMATION_ROTATION_INTERVAL: string = 'animation_rotation_interval';
   static readonly LIBRARY_SORT: string = 'library_sort';
   static readonly TRASH_RETENTION_DAYS: string = 'trash_retention_days';
+  static readonly MODEL_SPEED: string = 'model_speed';
+  static readonly MODEL2_SPEED: string = 'model2_speed';
+  static readonly ACTIVE_PLAYLIST_JSON: string = 'active_playlist_json';
+  static readonly MODEL2_PLAYLIST_JSON: string = 'model2_playlist_json';
+  static readonly ANIMATION_MIX: string = 'animation_mix_seconds';
 }
 
 const PREFS_STORE_NAME = 'spine_wallpaper_prefs';
@@ -78,6 +83,31 @@ export class SlotPrefs {
   static alphaKey(slot: number): string {
     return slot === 1 ? PrefsKeys.MODEL2_ALPHA : PrefsKeys.MODEL_ALPHA;
   }
+
+  static speedKey(slot: number): string {
+    return slot === 1 ? PrefsKeys.MODEL2_SPEED : PrefsKeys.MODEL_SPEED;
+  }
+
+  static playlistJsonKey(slot: number): string {
+    return slot === 1 ? PrefsKeys.MODEL2_PLAYLIST_JSON : PrefsKeys.ACTIVE_PLAYLIST_JSON;
+  }
+}
+
+/** 轮播列表持久化结构（槽位级）。 */
+export class PlaylistPrefs {
+  enabled: boolean;
+  names: Array<string>;
+
+  constructor(enabled: boolean, names: Array<string>) {
+    this.enabled = enabled;
+    this.names = names;
+  }
+}
+
+/** PlaylistPrefs JSON 原始结构（仅用于 JSON.parse 单次断言归一）。 */
+interface PlaylistPrefsRaw {
+  enabled?: Object;
+  names?: Array<Object>;
 }
 
 /**
@@ -166,6 +196,36 @@ export class PrefsManager {
   /** 写入多选皮肤集合（序列化为 JSONArray 字符串）。 */
   putSelectedSkins(skinsJsonKey: string, skins: Array<string>): void {
     this.store?.putSync(skinsJsonKey, JSON.stringify(skins));
+  }
+
+  /** 读取轮播列表偏好；损坏/缺失回退为关闭 + 空列表。 */
+  getPlaylist(key: string): PlaylistPrefs {
+    const json = this.getString(key, '');
+    if (json.length > 0) {
+      try {
+        const parsed = JSON.parse(json) as PlaylistPrefsRaw;
+        if (parsed !== null && typeof parsed.enabled === 'boolean') {
+          const names = new Array<string>();
+          const rawNames = parsed.names;
+          if (rawNames !== undefined && rawNames !== null) {
+            for (const item of rawNames) {
+              if (typeof item === 'string' && item.length > 0) {
+                names.push(item);
+              }
+            }
+          }
+          return new PlaylistPrefs(parsed.enabled, names);
+        }
+      } catch (err) {
+        console.error(`PrefsManager parse playlist json failed: ${JSON.stringify(err)}`);
+      }
+    }
+    return new PlaylistPrefs(false, new Array<string>());
+  }
+
+  /** 写入轮播列表偏好（序列化为 JSON 字符串）。 */
+  putPlaylist(key: string, playlist: PlaylistPrefs): void {
+    this.store?.putSync(key, JSON.stringify(playlist));
   }
 
   /** 同步落盘（阻塞直至写入完成）。 */

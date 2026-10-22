@@ -39,6 +39,22 @@ export interface BridgeCommand {
   color?: string;
   /** 背景图虚拟域相对地址（/bg/<文件名>），空串表示移除。 */
   url?: string;
+  /** 槽位播放速度 0.25-2（setSpeed 专用）。 */
+  speed?: number;
+  /** 全局动画过渡混合秒数 0-0.5（setMix 专用）。 */
+  mix?: number;
+  /** 轮播动画名列表，按点选顺序（setPlaylist 专用）。 */
+  names?: Array<string>;
+  /** 轮播开关（setPlaylist 专用）。 */
+  enabled?: boolean;
+  /** config.json tap_motions：命中区域 → 动画（loadModel 专用）。 */
+  tapMotions?: Array<TapMotionEntry>;
+}
+
+/** config.json tap_motions 条目：area 为 bounding box attachment 名或槽位名。 */
+export interface TapMotionEntry {
+  area: string;
+  anim: string;
 }
 
 /** 命令名常量，避免拼写漂移。 */
@@ -59,6 +75,9 @@ export class BridgeCmdNames {
   static readonly SET_SLOT_VISIBLE: string = 'setSlotVisible';
   static readonly SET_MIRROR: string = 'setMirror';
   static readonly SET_ALPHA: string = 'setAlpha';
+  static readonly SET_SPEED: string = 'setSpeed';
+  static readonly SET_MIX: string = 'setMix';
+  static readonly SET_PLAYLIST: string = 'setPlaylist';
 }
 
 /** Web→ArkTS：模型加载完成事件。 */
