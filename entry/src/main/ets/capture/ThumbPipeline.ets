@@ -74,22 +74,6 @@ export class ThumbPipeline {
     }
   }
 
-  /** 收集缺少缩略图且可渲染的模型并启动补全管线。 */
-  startForMissing(models: Array<SpineModelItem>): void {
-    if (this.deps.isGenerating()) {
-      return;
-    }
-    const ids = new Array<string>();
-    for (const m of models) {
-      if (!m.hasThumb && m.isSupported()) {
-        ids.push(m.id);
-      }
-    }
-    if (ids.length > 0) {
-      this.generate(ids);
-    }
-  }
-
   /**
    * 串行生成缩略图：逐个加载到槽 0 → 稳帧 → 截帧存缩略图，完成后恢复主模型。
    * 运行期间抑制 widget 自动截帧（宿主 scheduleCapture guard）。

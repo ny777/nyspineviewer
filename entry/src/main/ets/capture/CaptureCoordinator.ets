@@ -36,10 +36,6 @@ export class CaptureCoordinator {
     this.deps = deps;
   }
 
-  isRunning(): boolean {
-    return this.running;
-  }
-
   /** 发起截帧（进行中或 Web 未就绪时忽略）。 */
   start(purpose: string): void {
     if (this.running || !this.deps.isWebReady()) {

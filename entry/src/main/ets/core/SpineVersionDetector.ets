@@ -35,19 +35,7 @@ interface SkeletonMetaRaw {
 }
 
 /**
- * 检测骨骼文件（.skel 或 .json）的 Spine 版本与格式。
- * fileFullPath 为沙箱内绝对路径。
- */
-export function detectSpineVersion(fileFullPath: string): SpineDetectResult {
-  const format = detectFormat(fileFullPath);
-  if (format === 'JSON') {
-    return { version: detectFromJson(fileFullPath), format: format };
-  }
-  return { version: detectFromBinary(fileFullPath), format: format };
-}
-
-/**
- * 同 detectSpineVersion，但 JSON 分支复用调用方已读出的文本（避免重复读盘/解析）；
+ * 同上（detectFormat），但 JSON 分支复用调用方已读出的文本（避免重复读盘/解析）；
  * format 为 SKEL 时 jsonText 忽略。
  */
 export function detectSpineVersionFromText(fileFullPath: string, jsonText: string): SpineDetectResult {
@@ -65,16 +53,6 @@ export function detectFormat(fileFullPath: string): string {
     return 'JSON';
   }
   return 'SKEL';
-}
-
-/** 解析 JSON 骨骼描述中的 skeleton.spine 版本字段。 */
-function detectFromJson(fileFullPath: string): SpineVersion {
-  try {
-    return detectFromJsonText(fileIo.readTextSync(fileFullPath));
-  } catch (err) {
-    console.error(`${TAG} detectFromJson failed: ${JSON.stringify(err)}`);
-    return SpineVersion.UNKNOWN;
-  }
 }
 
 /** 同 detectFromJson，但直接消费已读出的 JSON 文本。 */

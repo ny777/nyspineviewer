@@ -594,17 +594,6 @@ export class SpineModelLibrary {
     this.writeLibraryIndex(this.models);
   }
 
-  /** 批量删除：逐个串行删除，单个失败（如 IO 异常）继续下一个，不中断整批。 */
-  async deleteModels(ids: Array<string>): Promise<void> {
-    for (const id of ids) {
-      try {
-        await this.deleteModel(id);
-      } catch (err) {
-        // 单个失败继续删除其余
-      }
-    }
-  }
-
   // ==================== 回收站 ====================
 
   /** 读取 trash.json 索引（目录已缺失的条目丢弃并自愈重写）。 */

@@ -11,7 +11,7 @@
  * 消息协议：与 ArkTS BridgeProtocol.ets 严格一致。
  *   ArkTS→Web: window.SpineHost.cmd({cmd: 'loadModel', ...})
  *   Web→ArkTS: window.spineBridge.onModelLoaded(json) / onError / onCaptureFrameChunk /
- *              onCaptureFrame / onTransformChanged / onAnimationChanged
+ *              onCaptureFrame / onTransformChanged / onAnimationChanged / onScreenTap
  */
 (function () {
   'use strict';

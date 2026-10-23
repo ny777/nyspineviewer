@@ -51,11 +51,6 @@ export class SpineModelItem {
     return SUPPORTED_VERSIONS.indexOf(this.version) >= 0;
   }
 
-  /** 骨架文件沙箱绝对路径。 */
-  skelPath(): string {
-    return `${this.folderPath}/${this.skelFile}`;
-  }
-
   /** 图集文件沙箱绝对路径（无图集返回空串）。 */
   atlasPath(): string {
     if (this.atlasFile.length === 0) {

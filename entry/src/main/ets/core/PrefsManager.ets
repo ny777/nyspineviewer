@@ -228,11 +228,6 @@ export class PrefsManager {
     this.store?.putSync(key, JSON.stringify(playlist));
   }
 
-  /** 同步落盘（阻塞直至写入完成）。 */
-  flushSync(): void {
-    this.store?.flushSync();
-  }
-
   /** 异步落盘。 */
   async flush(): Promise<void> {
     await this.store?.flush();

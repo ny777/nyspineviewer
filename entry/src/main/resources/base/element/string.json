@@ -13,32 +13,12 @@
       "value": "Spine 播放器"
     },
     {
-      "name": "open_drawer",
-      "value": "模型库"
-    },
-    {
       "name": "drawer_title",
       "value": "模型库"
     },
     {
       "name": "import_model",
       "value": "导入模型 (ZIP)"
-    },
-    {
-      "name": "importing",
-      "value": "导入中…"
-    },
-    {
-      "name": "importing_progress",
-      "value": "导入中 %s"
-    },
-    {
-      "name": "empty_library_title",
-      "value": "暂无模型"
-    },
-    {
-      "name": "empty_library_hint",
-      "value": "点击上方“导入模型”按钮导入 Spine ZIP 压缩包"
     },
     {
       "name": "badge_unsupported",
@@ -85,28 +65,12 @@
       "value": "暂停"
     },
     {
-      "name": "capture",
-      "value": "截图"
-    },
-    {
       "name": "reset_transform",
       "value": "重置"
     },
     {
-      "name": "bg_color",
-      "value": "背景色"
-    },
-    {
-      "name": "animation_label",
-      "value": "动画"
-    },
-    {
       "name": "no_animation",
       "value": "暂无动画"
-    },
-    {
-      "name": "pma_label",
-      "value": "PMA"
     },
     {
       "name": "settings_pma_main",
@@ -169,10 +133,6 @@
       "value": "帧率"
     },
     {
-      "name": "skins_label",
-      "value": "皮肤"
-    },
-    {
       "name": "color_title",
       "value": "背景设置"
     },
@@ -201,20 +161,12 @@
       "value": "删除"
     },
     {
-      "name": "confirm_delete",
-      "value": "确定删除该模型？删除后不可恢复"
-    },
-    {
       "name": "toast_import_ok",
       "value": "模型导入成功"
     },
     {
       "name": "toast_import_fail",
       "value": "导入模型失败"
-    },
-    {
-      "name": "toast_deleted",
-      "value": "已删除"
     },
     {
       "name": "toast_delete_fail",
@@ -397,10 +349,6 @@
       "value": "深色主题"
     },
     {
-      "name": "theme_light_label",
-      "value": "浅色主题"
-    },
-    {
       "name": "version_info_entry",
       "value": "版本说明"
     },
@@ -563,10 +511,6 @@
     {
       "name": "batch_delete",
       "value": "删除"
-    },
-    {
-      "name": "batch_delete_confirm",
-      "value": "确定删除选中的 %d 个模型？删除后不可恢复"
     },
     {
       "name": "batch_move_to_trash_confirm",
