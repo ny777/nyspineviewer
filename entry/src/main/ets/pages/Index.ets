@@ -2,7 +2,7 @@
  * 主页面：Spine 2D 播放器（ArkWeb 渲染 + 模型库 + 播放控制 + 截帧保存）。
  * 状态与持久化全部集中在本页，子组件为受控组件。
  */
-import { HdsTabs, HdsTabsController } from '@kit.UIDesignKit';
+import { HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
 import { window } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { picker } from '@kit.CoreFileKit';
@@ -207,6 +207,8 @@ struct Index {
   @State capturing: boolean = false;
   /** 沉浸模式：控制条收起状态（内存态，每次启动默认显示）。 */
   @State controlBarVisible: boolean = true;
+  /** 底部悬浮栏材质档位（aboutToAppear 按设备能力探测，默认 ADAPTIVE）。 */
+  @State barMaterialType: hdsMaterial.MaterialType = hdsMaterial.MaterialType.ADAPTIVE;
   /** 槽位模型显隐（会话级，不持久化；进 App 默认双显）。 */
   @State slotVisible: Array<boolean> = [true, true];
   /** 缩略图补全管线运行中（抑制 widget 自动截帧）。 */
@@ -259,6 +261,17 @@ struct Index {
     const context: Context = getContext(this);
     this.modelsRoot = `${context.filesDir}/models`;
     this.bgRoot = `${context.filesDir}/bg`;
+
+    // 探测设备材质档位：支持沉浸光感（IMMERSIVE）则启用，否则保持 ADAPTIVE
+    try {
+      const supportedMaterials: Array<hdsMaterial.MaterialType> = hdsMaterial.getSystemMaterialTypes();
+      if (supportedMaterials.includes(hdsMaterial.MaterialType.IMMERSIVE)) {
+        this.barMaterialType = hdsMaterial.MaterialType.IMMERSIVE;
+      }
+    } catch (error) {
+      const err = error as BusinessError;
+      hilog.warn(LOG_DOMAIN, TAG, `getSystemMaterialTypes failed: ${err.code} ${err.message}`);
+    }
 
     this.bridge.modelLoadedHandler = (json: string): void => {
       this.handleModelLoaded(json);
@@ -608,7 +621,12 @@ struct Index {
     .cachedMaxCount(2, TabsCacheMode.CACHE_BOTH_SIDE)
     .barFloatingStyle({
       barSideMargin: 16,
-      barBottomMargin: 12
+      barBottomMargin: 12,
+      // 沉浸光感材质（设备不支持时 aboutToAppear 已降级为 ADAPTIVE）
+      systemMaterialEffect: {
+        materialType: this.barMaterialType,
+        materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+      }
     })
     .onChange((index: number) => {
       this.handleTabChange(index);
