@@ -99,9 +99,6 @@ entry/src/main/resources/rawfile/web/   WebView 渲染层（player-host.js + spi
 - Spine 3.5 – 3.7 / 4.3 运行时暂未集成（识别但不可播放）
 - 仅适配手机（竖屏）
 
-## 已知问题
-
-- `build-profile.json5` 的历史提交中曾包含本地调试签名材料（最新版本已移除；建议贡献者使用本地自动签名，勿提交签名信息）
 
 ## 开发计划
 
