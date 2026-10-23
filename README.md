@@ -111,6 +111,15 @@ entry/src/main/resources/rawfile/web/   WebView 渲染层（player-host.js + spi
 
 ## 版本记录
 
+### v1.1.1（2026-10-23）
+
+**维护与清理**（行为零变化）
+- 删除 8 项死代码：`PrefsManager.flushSync`、`CaptureCoordinator.isRunning`、`ThumbPipeline.startForMissing`、`SpineModelLibrary.deleteModels`、`SpineModelItem.skelPath`、`detectSpineVersion`、`spineVersionDisplayName`、`spineVersionFallbackOrder`
+- `Live2DConfig` 精简为实际消费的 `scale` / `idle_motion` / `tap_motions` 字段，移除 `Live2DMotion` 类与未消费字段
+- 清理未使用资源：string 14 项、color 16 项（仅保留 `start_window_background`）、删除空 float.json
+- 修复 `player-host.js` 文件头回调注释漂移（补 `onScreenTap`）
+- 全量核查确认 Bridge 协议 19 命令 / 7 事件双向无孤儿消息
+
 ### v1.1.0（2026-10-22）
 
 **新功能**
