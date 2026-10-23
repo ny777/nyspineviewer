@@ -255,6 +255,7 @@ struct Index {
     AppStorage.setOrCreate('themeDark', dark);
     this.prefs?.putString(PrefsKeys.THEME_MODE, dark ? 'dark' : 'light');
     this.prefs?.flush();
+    this.applySystemBarTheme(dark);
   }
 
   async aboutToAppear(): Promise<void> {
@@ -322,7 +323,9 @@ struct Index {
     this.bgColor = intColorToHex(prefs.getNumber(PrefsKeys.BG_COLOR, PrefsManager.defaultBgColor));
     this.bgImageName = prefs.getString(PrefsKeys.BG_IMAGE_PATH, '');
     this.bgFavorites = this.loadBgFavorites(prefs);
-    AppStorage.setOrCreate('themeDark', prefs.getString(PrefsKeys.THEME_MODE, 'dark') !== 'light');
+    const dark: boolean = prefs.getString(PrefsKeys.THEME_MODE, 'dark') !== 'light';
+    AppStorage.setOrCreate('themeDark', dark);
+    this.applySystemBarTheme(dark);
     this.initSlotUi(0);
     this.initSlotUi(1);
   }
@@ -1719,6 +1722,25 @@ struct Index {
       win.setWindowKeepScreenOn(active);
     }).catch((error: BusinessError): void => {
       hilog.warn(LOG_DOMAIN, TAG, 'setWindowKeepScreenOn failed: %{public}s', error.message);
+    });
+  }
+
+  /** 系统栏（状态栏/导航条）跟随应用主题：栏背景=页面底色，内容色=主题文字色。 */
+  private applySystemBarTheme(dark: boolean): void {
+    const colors: ThemeColors = getTheme(dark);
+    const barBg: string = intColorToHex(colors.pageBg);
+    const barContent: string = intColorToHex(colors.text);
+    window.getLastWindow(getContext(this)).then((win: window.Window): void => {
+      win.setWindowSystemBarProperties({
+        statusBarColor: barBg,
+        statusBarContentColor: barContent,
+        navigationBarColor: barBg,
+        navigationBarContentColor: barContent
+      }).catch((error: BusinessError): void => {
+        hilog.warn(LOG_DOMAIN, TAG, 'setWindowSystemBarProperties failed: %{public}s', error.message);
+      });
+    }).catch((error: BusinessError): void => {
+      hilog.warn(LOG_DOMAIN, TAG, 'getLastWindow failed: %{public}s', error.message);
     });
   }
 
