@@ -16,6 +16,7 @@
 import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
+import { BusinessError } from '@kit.BasicServicesKit';
 
 const DOMAIN = 0x0000;
 
@@ -36,6 +37,16 @@ export default class EntryAbility extends UIAbility {
   onWindowStageCreate(windowStage: window.WindowStage): void {
     // Main window is created, set main page for this ability
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onWindowStageCreate');
+
+    // 沉浸式全屏：loadContent 前开启，避免首帧非全屏重排闪烁；失败降级为非全屏
+    try {
+      const mainWin: window.Window = windowStage.getMainWindowSync();
+      mainWin.setWindowLayoutFullScreen(true).catch((error: BusinessError): void => {
+        hilog.warn(DOMAIN, 'testTag', 'setWindowLayoutFullScreen failed. Cause: %{public}s', error.message);
+      });
+    } catch (error) {
+      hilog.warn(DOMAIN, 'testTag', 'getMainWindowSync failed. Cause: %{public}s', JSON.stringify(error));
+    }
 
     windowStage.loadContent('pages/Index', (err) => {
       if (err.code) {

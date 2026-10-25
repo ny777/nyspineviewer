@@ -65,6 +65,10 @@ export struct SettingsPage {
   onOpenBgSettings: () => void = () => {
   };
   @StorageProp('themeDark') themeDark: boolean = true;
+  /** 状态栏避让高度（沉浸式全屏，Index 动态下发）。 */
+  @Prop topInsetVp: number = 0;
+  /** 导航条手势区避让高度（沉浸式全屏，Index 动态下发）。 */
+  @Prop bottomInsetVp: number = 0;
   private versionInfoController: CustomDialogController = new CustomDialogController({
     builder: VersionInfoDialog({}),
     autoCancel: true,
@@ -240,7 +244,7 @@ export struct SettingsPage {
     .scrollBar(BarState.Auto)
     .width('100%')
     .height('100%')
-    .padding({ left: 16, right: 16, top: 16, bottom: 100 })
+    .padding({ left: 16, right: 16, top: 16 + this.topInsetVp, bottom: 100 + this.bottomInsetVp })
     .backgroundColor(this.theme().pageBg)
     .edgeEffect(EdgeEffect.Spring)
   }

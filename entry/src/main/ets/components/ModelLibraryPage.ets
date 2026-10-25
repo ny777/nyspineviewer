@@ -61,6 +61,10 @@ export struct ModelLibraryPage {
   /** 缺图横幅本次会话是否已忽略。 */
   @State thumbBannerDismissed: boolean = false;
   @StorageProp('themeDark') themeDark: boolean = true;
+  /** 状态栏避让高度（沉浸式全屏，Index 动态下发）。 */
+  @Prop topInsetVp: number = 0;
+  /** 导航条手势区避让高度（沉浸式全屏，Index 动态下发）。 */
+  @Prop bottomInsetVp: number = 0;
 
   /** LazyForEach 扁平行数据源（分组头 + 一行两卡），rebuild 后按 key 差分复用未变行。 */
   private dataSource: LibraryListDataSource = new LibraryListDataSource();
@@ -457,7 +461,7 @@ export struct ModelLibraryPage {
     }
     .width('100%')
     .height('100%')
-    .padding({ left: 16, right: 16, top: 16, bottom: 100 })
+    .padding({ left: 16, right: 16, top: 16 + this.topInsetVp, bottom: 100 + this.bottomInsetVp })
     .backgroundColor(this.theme().pageBg)
   }
 

@@ -245,6 +245,12 @@ struct Index {
   });
   @State bgFavorites: Array<string> = DEFAULT_BG_FAVORITES.slice();
   @StorageProp('themeDark') themeDark: boolean = true;
+  /** 状态栏避让高度（沉浸式全屏，vp；avoidAreaChange 动态更新）。 */
+  @State topInsetVp: number = 0;
+  /** 导航条手势区避让高度（沉浸式全屏，vp；avoidAreaChange 动态更新）。 */
+  @State bottomInsetVp: number = 0;
+  /** 主窗口引用（aboutToDisappear 注销 avoidAreaChange 监听用）。 */
+  private mainWindowRef: window.Window | null = null;
 
   private theme(): ThemeColors {
     return getTheme(this.themeDark);
@@ -326,11 +332,13 @@ struct Index {
     const dark: boolean = prefs.getString(PrefsKeys.THEME_MODE, 'dark') !== 'light';
     AppStorage.setOrCreate('themeDark', dark);
     this.applySystemBarTheme(dark);
+    this.setupAvoidAreas();
     this.initSlotUi(0);
     this.initSlotUi(1);
   }
 
   aboutToDisappear(): void {
+    this.mainWindowRef?.off('avoidAreaChange');
     this.clearRotationTimer();
     this.capture.dispose();
     this.widget.dispose();
@@ -468,10 +476,10 @@ struct Index {
             })
           }
           .width('100%')
-          .padding({ left: 12, right: 12, bottom: 96 })
+          .padding({ left: 12, right: 12, bottom: 96 + this.bottomInsetVp })
 
           // 底部上滑手势区：展开被点按隐藏的控制条（悬浮页签栏两侧及上方区域可触发；
-          // 96vp 正好覆盖底部 Column 的 padding 空带，不遮挡把手与控制条）
+          // 96vp 覆盖底部 Column 的 padding 空带（含手势区避让高），不遮挡把手与控制条）
           Row()
             .width('100%')
             .height(96)
@@ -539,7 +547,9 @@ struct Index {
             this.changeLibrarySort(mode);
           },
           sortMode: this.librarySort,
-          trashCount: this.trashEntries.length
+          trashCount: this.trashEntries.length,
+          topInsetVp: this.topInsetVp,
+          bottomInsetVp: this.bottomInsetVp
         })
       }
       .tabBar({ icon: $r('app.media.tab_library'), text: $r('app.string.tab_library') })
@@ -612,7 +622,9 @@ struct Index {
           },
           onOpenBgSettings: (): void => {
             this.openColorDialog();
-          }
+          },
+          topInsetVp: this.topInsetVp,
+          bottomInsetVp: this.bottomInsetVp
         })
       }
       .tabBar({ icon: $r('app.media.tab_settings'), text: $r('app.string.tab_settings') })
@@ -624,7 +636,7 @@ struct Index {
     .cachedMaxCount(2, TabsCacheMode.CACHE_BOTH_SIDE)
     .barFloatingStyle({
       barSideMargin: 16,
-      barBottomMargin: 12,
+      barBottomMargin: 12 + this.bottomInsetVp,
       // 沉浸光感材质（设备不支持时 aboutToAppear 已降级为 ADAPTIVE）
       systemMaterialEffect: {
         materialType: this.barMaterialType,
@@ -1725,22 +1737,38 @@ struct Index {
     });
   }
 
-  /** 系统栏（状态栏/导航条）跟随应用主题：栏背景=页面底色，内容色=主题文字色。 */
+  /** 系统栏（状态栏/导航条）沉浸式：背景透明透出页面内容，内容色=主题文字色（深色主题白图标/浅色主题深图标）。 */
   private applySystemBarTheme(dark: boolean): void {
     const colors: ThemeColors = getTheme(dark);
-    const barBg: string = intColorToHex(colors.pageBg);
     const barContent: string = intColorToHex(colors.text);
     window.getLastWindow(getContext(this)).then((win: window.Window): void => {
       win.setWindowSystemBarProperties({
-        statusBarColor: barBg,
+        statusBarColor: '#00000000',
         statusBarContentColor: barContent,
-        navigationBarColor: barBg,
+        navigationBarColor: '#00000000',
         navigationBarContentColor: barContent
       }).catch((error: BusinessError): void => {
         hilog.warn(LOG_DOMAIN, TAG, 'setWindowSystemBarProperties failed: %{public}s', error.message);
       });
     }).catch((error: BusinessError): void => {
       hilog.warn(LOG_DOMAIN, TAG, 'getLastWindow failed: %{public}s', error.message);
+    });
+  }
+
+  /** 全屏布局下探测状态栏/手势条避让高度（vp）并监听变化（折叠/旋转），供三页布局避让。 */
+  private setupAvoidAreas(): void {
+    window.getLastWindow(getContext(this)).then((win: window.Window): void => {
+      this.mainWindowRef = win;
+      const refresh = (): void => {
+        const sys: window.AvoidArea = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
+        const nav: window.AvoidArea = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR);
+        this.topInsetVp = this.getUIContext().px2vp(sys.topRect.height);
+        this.bottomInsetVp = this.getUIContext().px2vp(nav.bottomRect.height);
+      };
+      refresh();
+      win.on('avoidAreaChange', refresh);
+    }).catch((error: BusinessError): void => {
+      hilog.warn(LOG_DOMAIN, TAG, 'setupAvoidAreas failed: %{public}s', error.message);
     });
   }
 
