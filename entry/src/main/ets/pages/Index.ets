@@ -300,7 +300,7 @@ struct Index {
     };
     this.bridge.screenTapHandler = (): void => {
       // 画布点按（Web touchend tap 分支上报）→ 沉浸：收起悬浮控制条
-      this.controlBarVisible = false;
+      this.setControlBarVisible(false);
     };
 
     this.prefs = await PrefsManager.getInstance(context);
@@ -351,6 +351,13 @@ struct Index {
       this.sendCommand({ cmd: BridgeCmdNames.SET_PLAYING, playing: false });
       this.updateRotationTimer();
     }
+  }
+
+  /** 展开或收起悬浮控制条。animateTo 驱动属性动画；ControlBar 恒渲染占位，Column 不塌陷。 */
+  private setControlBarVisible(visible: boolean): void {
+    this.getUIContext().animateTo({ duration: 220, curve: Curve.Friction }, (): void => {
+      this.controlBarVisible = visible;
+    });
   }
 
   onPageShow(): void {
@@ -404,59 +411,60 @@ struct Index {
 
           // 悬浮控制条（避开底部悬浮页签栏）+ 沉浸模式把手（收起/展开控制条）
           Column({ space: 6 }) {
-            if (this.controlBarVisible) {
-              ControlBar({
-                slot: this.selectedSlot,
-                playing: this.playing,
-                capturing: this.capturing,
-                animations: this.slotUi[this.selectedSlot].animations,
-                currentAnimation: this.slotUi[this.selectedSlot].currentAnimation,
-                skins: this.slotUi[this.selectedSlot].skins,
-                selectedSkins: this.slotUi[this.selectedSlot].selectedSkins,
-                slot0Visible: this.slotVisible[0],
-                slot1Visible: this.slotVisible[1],
-                mirrored: this.slotUi[this.selectedSlot].mirrored,
-                playlist: this.slotUi[this.selectedSlot].playlist,
-                playlistEnabled: this.slotUi[this.selectedSlot].playlistEnabled,
-                onSlotChange: (slot: number): void => {
-                  this.switchSlot(slot);
-                },
-                onSlotToggleVisible: (slot: number): void => {
-                  this.toggleSlotVisible(slot);
-                },
-                onTogglePlay: (): void => {
-                  this.togglePlay();
-                },
-                onToggleMirror: (): void => {
-                  this.toggleMirror();
-                },
-                onAnimationPick: (name: string): void => {
-                  this.pickAnimation(this.selectedSlot, name, true);
-                },
-                onPlaylistModeToggle: (): void => {
-                  this.togglePlaylistMode();
-                },
-                onPlaylistItemToggle: (name: string): void => {
-                  this.togglePlaylistItem(name);
-                },
-                onSkinToggle: (name: string): void => {
-                  this.toggleSkin(name);
-                },
-                onCapture: (): void => {
-                  this.capture.start(CAPTURE_PURPOSE_GALLERY);
-                },
-                onResetTransform: (): void => {
-                  this.resetTransform();
-                },
-                onClearSlot: (): void => {
-                  this.clearSlotModel(this.selectedSlot);
-                }
-              })
-              .width('100%')
-              .transition(TransitionEffect.translate({ y: 160 })
-                .combine(TransitionEffect.OPACITY)
-                .animation({ duration: 250, curve: Curve.Friction }))
-            }
+            // 恒渲染占位（防 Column 高度塌陷带动动画快照下移）；
+            // 透明度/缩放/位移由 setControlBarVisible 的 animateTo 驱动，从把手处浮出/缩回
+            ControlBar({
+              slot: this.selectedSlot,
+              playing: this.playing,
+              capturing: this.capturing,
+              animations: this.slotUi[this.selectedSlot].animations,
+              currentAnimation: this.slotUi[this.selectedSlot].currentAnimation,
+              skins: this.slotUi[this.selectedSlot].skins,
+              selectedSkins: this.slotUi[this.selectedSlot].selectedSkins,
+              slot0Visible: this.slotVisible[0],
+              slot1Visible: this.slotVisible[1],
+              mirrored: this.slotUi[this.selectedSlot].mirrored,
+              playlist: this.slotUi[this.selectedSlot].playlist,
+              playlistEnabled: this.slotUi[this.selectedSlot].playlistEnabled,
+              onSlotChange: (slot: number): void => {
+                this.switchSlot(slot);
+              },
+              onSlotToggleVisible: (slot: number): void => {
+                this.toggleSlotVisible(slot);
+              },
+              onTogglePlay: (): void => {
+                this.togglePlay();
+              },
+              onToggleMirror: (): void => {
+                this.toggleMirror();
+              },
+              onAnimationPick: (name: string): void => {
+                this.pickAnimation(this.selectedSlot, name, true);
+              },
+              onPlaylistModeToggle: (): void => {
+                this.togglePlaylistMode();
+              },
+              onPlaylistItemToggle: (name: string): void => {
+                this.togglePlaylistItem(name);
+              },
+              onSkinToggle: (name: string): void => {
+                this.toggleSkin(name);
+              },
+              onCapture: (): void => {
+                this.capture.start(CAPTURE_PURPOSE_GALLERY);
+              },
+              onResetTransform: (): void => {
+                this.resetTransform();
+              },
+              onClearSlot: (): void => {
+                this.clearSlotModel(this.selectedSlot);
+              }
+            })
+            .width('100%')
+            .opacity(this.controlBarVisible ? 1 : 0)
+            .scale({ x: this.controlBarVisible ? 1 : 0.8, y: this.controlBarVisible ? 1 : 0.8 })
+            .translate({ y: this.controlBarVisible ? 0 : 18 })
+            .hitTestBehavior(this.controlBarVisible ? HitTestMode.Default : HitTestMode.None)
             Button() {
               SymbolGlyph(this.controlBarVisible ? $r('sys.symbol.chevron_down') : $r('sys.symbol.chevron_up'))
                 .fontSize(12)
@@ -472,23 +480,24 @@ struct Index {
               ? $r('app.string.a11y_hide_controls')
               : $r('app.string.a11y_show_controls'))
             .onClick(() => {
-              this.controlBarVisible = !this.controlBarVisible;
+              this.setControlBarVisible(!this.controlBarVisible);
             })
           }
           .width('100%')
           .padding({ left: 12, right: 12, bottom: 96 + this.bottomInsetVp })
 
           // 底部上滑手势区：展开被点按隐藏的控制条（悬浮页签栏两侧及上方区域可触发；
-          // 96vp 覆盖底部 Column 的 padding 空带（含手势区避让高），不遮挡把手与控制条）
+          // 沉浸式全屏后底边=屏幕底，须上移避开系统手势条，高度覆盖 Column padding 空带）
           Row()
             .width('100%')
-            .height(96)
+            .height(96 + this.bottomInsetVp)
+            .margin({ bottom: this.bottomInsetVp })
             .backgroundColor(Color.Transparent)
             .hitTestBehavior(HitTestMode.Transparent)
             .gesture(PanGesture({ fingers: 1, direction: PanDirection.Vertical, distance: 8 })
               .onActionEnd((event: GestureEvent): void => {
                 if (event.offsetY < -20 && !this.controlBarVisible) {
-                  this.controlBarVisible = true;
+                  this.setControlBarVisible(true);
                 }
               }))
         }
